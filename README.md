@@ -6,7 +6,7 @@ A Telegram bot for shared flats that manages cleaning rotation fairly. **Cindere
 
 ## Features
 
-- 📅 **Weekly schedule** — Every Sunday, sends the full cleaning plan for the week
+- 📅 **Weekly schedule** — Every Sunday, assigns each person a random weekday (one reminder per day; postpones are the exception)
 - 📊 **Monthly stats** — End of each month, ranking of who cleaned what (most to least active)
 - 🧹 **Daily reminders** — Tags the responsible person on cleaning day
 - ⌨️ **Inline buttons** — Not today • 3 more days • Skip the week • Done

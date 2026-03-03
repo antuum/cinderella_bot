@@ -344,6 +344,19 @@ def set_remind_on(assignment_id: int, date_str: str):
         conn.close()
 
 
+def has_assignments_for_week(start_date: str, end_date: str) -> bool:
+    """Check if any assignments exist for this week (planned or not)."""
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM assignments WHERE due_date BETWEEN ? AND ? LIMIT 1",
+            (start_date, end_date)
+        ).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
+
 def get_assignments_for_week(start_date: str, end_date: str):
     conn = get_connection()
     try:

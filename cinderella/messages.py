@@ -7,7 +7,7 @@ INTRO = """👋 Hey everyone! I'm **Cinderella**, your flat cleaning fairy.
 
 I help you share cleaning fairly. Here's what I do:
 
-📅 **Weekly schedule** — Every Sunday I send the full cleaning schedule for the week.
+📅 **Weekly schedule** — Every Sunday I assign each person a random day of the week (one per day), then remind you when your day comes.
 📊 **Monthly stats** — At the end of each month I rank who cleaned what (most to least active).
 🧹 **Daily reminders** — On cleaning days I'll tag the responsible person.
 ⌨️ **Quick choices** — Use the buttons: Not today • 3 more days • Skip week • Done
