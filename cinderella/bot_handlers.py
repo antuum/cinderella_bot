@@ -39,7 +39,7 @@ def load_config() -> dict:
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "group" and update.effective_chat.type != "supergroup":
         await update.message.reply_text(
-            "👋 I'm Cinderella! Add me to a group chat to manage your flat's cleaning schedule. "
+            "[>] I'm Cinderella. Add me to a group chat to manage your flat's cleaning schedule. "
             "I only work in groups."
         )
         return
@@ -73,7 +73,7 @@ async def cmd_replace(update: Update, context: ContextTypes.DEFAULT_TYPE):
     new_user = args[2].lstrip("@")
     if db.replace_flatmate(old_user, new_name, new_user):
         await update.message.reply_text(
-            f"✓ Replaced @{old_user} with {new_name} (@{new_user}). "
+            f"[OK] Replaced @{old_user} with {new_name} (@{new_user}). "
             "The previous flatmate stays in history."
         )
     else:
@@ -87,10 +87,10 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not flatmates:
         await update.message.reply_text("No flatmates in the database yet. Check your config.")
         return
-    lines = ["📊 **Cleaning stats**\n"]
+    lines = ["[STATS] **Cleaning stats**\n---\n"]
     for f in flatmates:
         c = counts.get(f["id"], 0)
-        lines.append(f"• {f['name']} (@{f['telegram_username']}): {c} cleanings")
+        lines.append(f"  [>] {f['name']} (@{f['telegram_username']}): {c} cleanings")
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
@@ -234,12 +234,13 @@ async def send_reminder(context: ContextTypes.DEFAULT_TYPE, chat_id: int, assign
     assignment = db.get_assignment_by_id(assignment_id)
     if not assignment or assignment["status"] != "pending":
         return
-    # Use current reminder_count for tone, then increment after sending
     reminder_count = assignment["reminder_count"]
+    phrase_idx = db.get_and_advance_phrase(assignment["room_id"])
     text = msg.get_reminder_text(
         assignment["room_name"],
         assignment["telegram_username"],
         reminder_count,
+        phrase_idx,
     )
     keyboard = [
         [
@@ -248,7 +249,7 @@ async def send_reminder(context: ContextTypes.DEFAULT_TYPE, chat_id: int, assign
         ],
         [
             InlineKeyboardButton("Skip the week", callback_data=f"skip_week:{assignment_id}"),
-            InlineKeyboardButton("Done ✓", callback_data=f"done:{assignment_id}"),
+            InlineKeyboardButton("Done [OK]", callback_data=f"done:{assignment_id}"),
         ],
     ]
     await context.bot.send_message(
@@ -296,23 +297,25 @@ async def send_daily_reminders(context: ContextTypes.DEFAULT_TYPE):
     finally:
         conn.close()
 
-    for chat_id in chat_ids:
-        for a in assignments:
-            text = msg.get_reminder_text(
-                a["room_name"],
-                a["telegram_username"],
-                a["reminder_count"],
-            )
-            keyboard = [
-                [
-                    InlineKeyboardButton("Not today", callback_data=f"not_today:{a['id']}"),
-                    InlineKeyboardButton("3 more days", callback_data=f"three_days:{a['id']}"),
-                ],
-                [
-                    InlineKeyboardButton("Skip the week", callback_data=f"skip_week:{a['id']}"),
-                    InlineKeyboardButton("Done ✓", callback_data=f"done:{a['id']}"),
-                ],
-            ]
+    for a in assignments:
+        phrase_idx = db.get_and_advance_phrase(a["room_id"])
+        text = msg.get_reminder_text(
+            a["room_name"],
+            a["telegram_username"],
+            a["reminder_count"],
+            phrase_idx,
+        )
+        keyboard = [
+            [
+                InlineKeyboardButton("Not today", callback_data=f"not_today:{a['id']}"),
+                InlineKeyboardButton("3 more days", callback_data=f"three_days:{a['id']}"),
+            ],
+            [
+                InlineKeyboardButton("Skip the week", callback_data=f"skip_week:{a['id']}"),
+                InlineKeyboardButton("Done [OK]", callback_data=f"done:{a['id']}"),
+            ],
+        ]
+        for chat_id in chat_ids:
             try:
                 await context.bot.send_message(
                     chat_id=chat_id,
@@ -320,9 +323,9 @@ async def send_daily_reminders(context: ContextTypes.DEFAULT_TYPE):
                     parse_mode="Markdown",
                     reply_markup=InlineKeyboardMarkup(keyboard),
                 )
-                db.increment_reminder_count(a["id"])
             except Exception:
                 pass
+        db.increment_reminder_count(a["id"])
 
 
 async def send_monthly_stats(context: ContextTypes.DEFAULT_TYPE):

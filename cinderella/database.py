@@ -85,6 +85,13 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS room_phrase_state (
+                room_id INTEGER PRIMARY KEY,
+                phrase_index INTEGER DEFAULT 0,
+                phrase_order TEXT NOT NULL,
+                FOREIGN KEY (room_id) REFERENCES rooms(id)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_assignments_due ON assignments(due_date);
             CREATE INDEX IF NOT EXISTS idx_assignments_status ON assignments(status);
         """)
@@ -158,7 +165,7 @@ def sync_flatmates_from_config(config: dict):
 
 
 def replace_flatmate(old_username: str, new_name: str, new_username: str):
-    """Replace a flatmate (e.g. someone moved out). Old stays in history."""
+    """Replace a flatmate (e.g. someone moved out). Old stays in history. Reshuffles phrase order."""
     conn = get_connection()
     try:
         old = conn.execute(
@@ -177,7 +184,63 @@ def replace_flatmate(old_username: str, new_name: str, new_username: str):
             (datetime.utcnow().isoformat(), new_id, old["id"])
         )
         conn.commit()
+        reshuffle_phrase_orders()
         return True
+    finally:
+        conn.close()
+
+
+def reshuffle_phrase_orders():
+    """Shuffle phrase order for all rooms. Called when a flatmate is replaced."""
+    import random
+    conn = get_connection()
+    try:
+        rooms = conn.execute("SELECT id FROM rooms").fetchall()
+        order = list(range(33))
+        for r in rooms:
+            shuffled = order.copy()
+            random.shuffle(shuffled)
+            conn.execute(
+                """INSERT INTO room_phrase_state (room_id, phrase_index, phrase_order) VALUES (?, 0, ?)
+                   ON CONFLICT(room_id) DO UPDATE SET phrase_index = 0, phrase_order = excluded.phrase_order""",
+                (r["id"], json.dumps(shuffled))
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_and_advance_phrase(room_id: int, num_phrases: int = 33) -> int:
+    """
+    Get current phrase index for room, advance for next time. Returns 0-32.
+    Creates state if missing (with shuffled order).
+    """
+    import random
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT phrase_index, phrase_order FROM room_phrase_state WHERE room_id = ?",
+            (room_id,)
+        ).fetchone()
+        if not row:
+            order = list(range(num_phrases))
+            random.shuffle(order)
+            conn.execute(
+                "INSERT INTO room_phrase_state (room_id, phrase_index, phrase_order) VALUES (?, 0, ?)",
+                (room_id, json.dumps(order))
+            )
+            conn.commit()
+            return 0
+        idx = row["phrase_index"]
+        order = json.loads(row["phrase_order"])
+        phrase_idx = order[idx % num_phrases]
+        next_idx = (idx + 1) % num_phrases
+        conn.execute(
+            "UPDATE room_phrase_state SET phrase_index = ? WHERE room_id = ?",
+            (next_idx, room_id)
+        )
+        conn.commit()
+        return phrase_idx
     finally:
         conn.close()
 
