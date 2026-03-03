@@ -26,7 +26,26 @@ A Telegram bot for shared flats that manages cleaning rotation fairly. **Cindere
   [>] Proactive cleaning — Someone else did your turn? Logged. You rest later.
   [>] Tone escalation    — Friendly -> firm -> military -> guilt
   [>] Replace flatmates  — Someone moved out? /replace keeps history
+  [>] 33 awareness phrases — Rotating prompts per room; reshuffle on replace
+  [>] New person = min count — Enters rotation immediately; proactive people stay safe
 ```
+
+---
+
+## Run Modes
+
+```
+  ./run.sh              Foreground. Attached to terminal. Stops when you close it.
+  ./run.sh -d           Daemon. Runs in background. Survives terminal close. Logs to data/cinderella.log
+  ./run.sh --install    Install autorun (systemd/launchd). Starts on login. Restarts on crash.
+  ./run.sh --auto       Try autorun first; if that fails, daemon; else foreground.
+  ./run.sh --status     Check if the bot is running.
+  ./run.sh --stop       Stop the background or service process.
+```
+
+**Autorun** — On Linux: systemd user service (`~/.config/systemd/user/`). On macOS: launchd (`~/Library/LaunchAgents/`). No sudo. On headless Linux servers: `loginctl enable-lingering $USER` may be needed so the service runs without an active login.
+
+**Daemon** — Writes PID to `data/cinderella.pid`. Does not survive reboot; use `--install` for that.
 
 ---
 
@@ -64,7 +83,12 @@ cp config.example.json config.json
 ### 4. Run
 
 ```bash
-./run.sh
+./run.sh              # Foreground (default)
+./run.sh -d           # Background (survives terminal close)
+./run.sh --install    # Install autorun (systemd/launchd) and start
+./run.sh --auto       # Try autorun, else background, else foreground
+./run.sh --status     # Check if running
+./run.sh --stop       # Stop background process
 ```
 
 Or manually:
@@ -131,6 +155,8 @@ python main.py
 - **times_per_month**: 4 = once per week, 2 = every two weeks
 - **telegram_username**: Must match the user's @username on Telegram (without the `@`)
 
+**Tracking** — Fair rotation uses all-time totals (no monthly reset). `/stats` shows real cleanings. Monthly report shows that month only. New flatmate via `/replace` gets starting_offset = min(others) so they enter rotation immediately.
+
 ---
 
 ## Commands
@@ -159,16 +185,16 @@ When reminded about a cleaning:
 
 ## Running on Different Servers
 
-The project is self-contained:
+The project is self-contained. Copy the folder (including `data/` if you already ran it) to another machine:
 
 ```
-  [*] Copy the whole folder (including data/ if you already ran it)
+  [*] Copy the whole folder
   [*] Set TELEGRAM_BOT_TOKEN in .env
   [*] Adjust config.json if needed
-  [*] Run ./run.sh
+  [*] ./run.sh --install   (autorun) or ./run.sh -d (daemon) or ./run.sh (foreground)
 ```
 
-The SQLite database is stored in `data/cinderella.db`. Moving this folder keeps all history.
+The SQLite database is in `data/cinderella.db`. Logs: `data/cinderella.log`. PID: `data/cinderella.pid`.
 
 ---
 
@@ -220,9 +246,11 @@ The old flatmate stays in history and stats. Phrase order reshuffles on replace.
   [*] Bot must be running at that time (systemd, cron, etc.)
 ```
 
-**Running 24/7 (Linux)**
+**Running 24/7**
 
-Example `systemd` unit:
+Use `./run.sh --install` — it installs the service and starts the bot. One command. On headless Linux: `loginctl enable-lingering $USER` if the service does not start without a login.
+
+Manual system-wide install (Linux, requires sudo, optional):
 
 ```ini
 [Unit]
