@@ -14,7 +14,7 @@ def escape_md(text: str) -> str:
 
 INTRO_TEMPLATE = """
     ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·
-          _
+          \\_
         (   )
          | |
         /   \\
