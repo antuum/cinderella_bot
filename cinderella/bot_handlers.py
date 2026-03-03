@@ -84,11 +84,11 @@ async def cmd_replace(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         flatmates = db.get_active_flatmates()
         counts = db.get_cleaning_count_per_flatmate()
-        tags = " ".join(f"@{f['telegram_username']}" for f in flatmates)
+        tags = " ".join(f"@{msg.escape_md(f['telegram_username'])}" for f in flatmates)
         lines = [f"[ROSTER] **Updated.** {tags}\n---", "[STATS] **Current counters**\n"]
         for f in flatmates:
             c = counts.get(f["id"], 0)
-            lines.append(f"  [>] {f['name']} (@{f['telegram_username']}): {c} cleanings")
+            lines.append(f"  [>] {msg.escape_md(f['name'])} (@{msg.escape_md(f['telegram_username'])}): {c} cleanings")
         await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
     else:
         await update.message.reply_text(f"Could not find @{old_user} in the flatmate list.")
@@ -104,7 +104,7 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = ["[STATS] **Cleaning stats**\n---\n"]
     for f in flatmates:
         c = counts.get(f["id"], 0)
-        lines.append(f"  [>] {f['name']} (@{f['telegram_username']}): {c} cleanings")
+        lines.append(f"  [>] {msg.escape_md(f['name'])} (@{msg.escape_md(f['telegram_username'])}): {c} cleanings")
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
@@ -124,8 +124,8 @@ async def cmd_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for a in assignments:
             text += msg.WEEKLY_LINE.format(
                 date=a["due_date"],
-                room=a["room_name"],
-                username=a["telegram_username"],
+                room=msg.escape_md(a["room_name"]),
+                username=msg.escape_md(a["telegram_username"]),
             )
     await update.message.reply_text(text, parse_mode="Markdown")
 
@@ -178,15 +178,15 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Message
         if clicker and not was_assigned:
             done_msg = random.choice(msg.DONE_BY_OTHER_MESSAGES).format(
-                username=clicker_username,
-                room=room_name,
+                username=msg.escape_md(clicker_username),
+                room=msg.escape_md(room_name),
                 next_person="?",  # TODO: could compute next
                 next_room="?",
             )
         else:
             done_msg = random.choice(msg.DONE_MESSAGES).format(
-                username=assigned_username,
-                room=room_name,
+                username=msg.escape_md(assigned_username),
+                room=msg.escape_md(room_name),
                 next_person="?",
                 next_room="?",
             )
@@ -201,7 +201,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 when=datetime.now() + timedelta(days=1),
                 data={"assignment_id": assignment_id, "chat_id": chat_id},
             )
-        reply = msg.NOT_TODAY_REPLY.format(username=assigned_username)
+        reply = msg.NOT_TODAY_REPLY.format(username=msg.escape_md(assigned_username))
         await query.edit_message_text(reply, parse_mode="Markdown")
 
     elif action == "three_days":
@@ -213,7 +213,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 when=datetime.now() + timedelta(days=3),
                 data={"assignment_id": assignment_id, "chat_id": chat_id},
             )
-        reply = msg.THREE_DAYS_REPLY.format(username=assigned_username)
+        reply = msg.THREE_DAYS_REPLY.format(username=msg.escape_md(assigned_username))
         await query.edit_message_text(reply, parse_mode="Markdown")
 
     elif action == "skip_week":
@@ -224,13 +224,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if next_person:
             db.create_assignment(room_id, next_person["id"], due_date)
             reply = msg.SKIP_REASSIGN.format(
-                username=assigned_username,
-                new_username=next_person["telegram_username"],
-                room=room_name,
+                username=msg.escape_md(assigned_username),
+                new_username=msg.escape_md(next_person["telegram_username"]),
+                room=msg.escape_md(room_name),
             )
             await query.edit_message_text(reply, parse_mode="Markdown")
         else:
-            reply = msg.SKIP_WEEK_REPLY.format(username=assigned_username, room=room_name)
+            reply = msg.SKIP_WEEK_REPLY.format(username=msg.escape_md(assigned_username), room=msg.escape_md(room_name))
             await query.edit_message_text(reply, parse_mode="Markdown")
 
 
@@ -384,8 +384,8 @@ async def send_weekly_schedule(context: ContextTypes.DEFAULT_TYPE):
         for a in assignments:
             text += msg.WEEKLY_LINE.format(
                 date=a["due_date"],
-                room=a["room_name"],
-                username=a["telegram_username"],
+                room=msg.escape_md(a["room_name"]),
+                username=msg.escape_md(a["telegram_username"]),
             )
 
     conn = db.get_connection()

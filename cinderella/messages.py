@@ -4,6 +4,14 @@ Friendly -> less friendly -> military -> guilt manipulation.
 Hacker-style text art, no emojis.
 """
 
+
+def escape_md(text: str) -> str:
+    """Escape characters that break Telegram Markdown parsing (e.g. underscores in usernames)."""
+    if not text:
+        return text
+    return text.replace("\\", "\\\\").replace("_", "\\_").replace("*", "\\*").replace("`", "\\`").replace("[", "\\[")
+
+
 INTRO_TEMPLATE = """
     ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·
           _
@@ -50,12 +58,12 @@ def build_intro_message(flatmates: list, counts: dict) -> str:
         greeting = ""
         stats = ""
     else:
-        tags = " ".join(f"@{f['telegram_username']}" for f in flatmates)
+        tags = " ".join(f"@{escape_md(f['telegram_username'])}" for f in flatmates)
         greeting = f"Greetings, {tags}. Verify your username is correct."
         lines = ["[STATS] **Current counters** (from invite or last replace)\n---"]
         for f in flatmates:
             c = counts.get(f["id"], 0)
-            lines.append(f"  [>] {f['name']} (@{f['telegram_username']}): {c} cleanings")
+            lines.append(f"  [>] {escape_md(f['name'])} (@{escape_md(f['telegram_username'])}): {c} cleanings")
         stats = "\n".join(lines)
     return INTRO_TEMPLATE.format(greeting=greeting, stats=stats)
 
@@ -177,11 +185,11 @@ def format_monthly_stats(year: int, month: int, stats: list) -> str:
         return MONTHLY_HEADER.format(month=month_str, year=year) + MONTHLY_EMPTY
     lines = [MONTHLY_HEADER.format(month=month_str, year=year)]
     for i, s in enumerate(stats, 1):
-        room_parts = [f"{room}: {cnt}x" for room, cnt in sorted(s["rooms"].items())]
+        room_parts = [f"{escape_md(room)}: {cnt}x" for room, cnt in sorted(s["rooms"].items())]
         room_breakdown = ", ".join(room_parts) if room_parts else "—"
         lines.append(MONTHLY_LINE.format(
             rank=i,
-            username=s["username"],
+            username=escape_md(s["username"]),
             total=s["total"],
             room_breakdown=room_breakdown,
         ))
@@ -193,6 +201,6 @@ def get_reminder_text(room: str, username: str, reminder_count: int, phrase_idx:
     tier = min(reminder_count, len(REMINDER_TONES) - 1)
     choices = REMINDER_TONES[tier]
     import random
-    tone_line = random.choice(choices).format(room=room, username=username)
+    tone_line = random.choice(choices).format(room=escape_md(room), username=escape_md(username))
     phrase = AWARENESS_PHRASES[phrase_idx % len(AWARENESS_PHRASES)]
     return f"{tone_line}\n\n{phrase}"
