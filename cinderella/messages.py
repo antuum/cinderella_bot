@@ -102,17 +102,17 @@ REMINDER_TONES = [
         "[!] Final reminder | @{username}: **{room}**. Flatmates are waiting.",
         ">> @{username}. Enough delays. **{room}**. Now.",
     ],
-    # 4 - Military
+    # 4 - Military (caps for visibility, not anger)
     [
         "[!] @{username} — REPORT FOR DUTY. **{room}**. THAT IS AN ORDER.",
-        "[!] ATTENTION @{username}: **{room}** requires immediate action. No excuses.",
-        ">> @{username}. **{room}**. Consider this your formal notice.",
+        "[!] ATTENTION @{username}: **{room}** REQUIRES IMMEDIATE ACTION. NO EXCUSES.",
+        ">> @{username}. **{room}**. CONSIDER THIS YOUR FORMAL NOTICE.",
     ],
-    # 5+ - Guilt / emotion
+    # 5+ - Guilt / emotion (caps for visibility, stands out in chat)
     [
-        ">> Your flatmates walk into a dirty **{room}** because of you, @{username}. Just saying.",
-        ">> Everyone does their part. Except **{room}** today. @{username} — is this who you want to be?",
-        ">> @{username} — **{room}** still waiting. Your friends deserve better.",
+        ">> YOUR FLATMATES WALK INTO A DIRTY **{room}** BECAUSE OF YOU, @{username}. JUST SAYING.",
+        ">> EVERYONE DOES THEIR PART. EXCEPT **{room}** TODAY. @{username} — IS THIS WHO YOU WANT TO BE?",
+        ">> @{username} — **{room}** STILL WAITING. YOUR FRIENDS DESERVE BETTER.",
     ],
 ]
 
