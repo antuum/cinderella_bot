@@ -140,6 +140,16 @@ do_status() {
     fi
 }
 
+do_start() {
+    if [[ "$(uname)" == "Linux" ]] && [ -f "${HOME}/.config/systemd/user/cinderella.service" ]; then
+        systemctl --user start cinderella 2>/dev/null && echo "[+] Started (systemd)" || echo "[!] Failed to start"
+    elif [[ "$(uname)" == "Darwin" ]] && [ -f "${HOME}/Library/LaunchAgents/com.cinderella.bot.plist" ]; then
+        launchctl load "${HOME}/Library/LaunchAgents/com.cinderella.bot.plist" 2>/dev/null && echo "[+] Started (launchd)" || echo "[!] Failed to start"
+    else
+        echo "[!] No installed service. Run ./run.sh --install first."
+    fi
+}
+
 do_stop() {
     if [ -f "$PIDFILE" ]; then
         PID=$(cat "$PIDFILE")
@@ -175,6 +185,9 @@ case "${1:-}" in
         run_daemon && exit 0
         run_foreground
         ;;
+    --start)
+        do_start
+        ;;
     --status)
         do_status
         ;;
@@ -185,10 +198,11 @@ case "${1:-}" in
         echo "Cinderella bot launcher"
         echo "  ./run.sh           Run in foreground"
         echo "  ./run.sh -d        Run in background"
-        echo "  ./run.sh --install Install autorun (systemd/launchd) and start"
+        echo "  ./run.sh --install Install autorun (one-time). Starts on boot."
+        echo "  ./run.sh --start   Start installed service (after --stop; no reinstall)"
         echo "  ./run.sh --auto    Try autorun, else background, else foreground"
         echo "  ./run.sh --status  Check if running"
-        echo "  ./run.sh --stop    Stop background process"
+        echo "  ./run.sh --stop    Stop. Use --start to resume."
         ;;
     *)
         run_foreground

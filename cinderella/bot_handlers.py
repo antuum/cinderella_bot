@@ -49,7 +49,13 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("I'm already here! Use /schedule to see this week's plan.")
         return
     db.set_bot_introduced(chat_id)
-    await update.message.reply_text(msg.INTRO, parse_mode="Markdown")
+    config = load_config()
+    if config:
+        db.sync_flatmates_from_config(config)
+    flatmates = db.get_active_flatmates()
+    counts = db.get_cleaning_count_per_flatmate()
+    intro = msg.build_intro_message(flatmates, counts)
+    await update.message.reply_text(intro, parse_mode="Markdown")
 
 
 async def cmd_replace(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -76,6 +82,14 @@ async def cmd_replace(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"[OK] Replaced @{old_user} with {new_name} (@{new_user}). "
             "The previous flatmate stays in history."
         )
+        flatmates = db.get_active_flatmates()
+        counts = db.get_cleaning_count_per_flatmate()
+        tags = " ".join(f"@{f['telegram_username']}" for f in flatmates)
+        lines = [f"[ROSTER] **Updated.** {tags}\n---", "[STATS] **Current counters**\n"]
+        for f in flatmates:
+            c = counts.get(f["id"], 0)
+            lines.append(f"  [>] {f['name']} (@{f['telegram_username']}): {c} cleanings")
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
     else:
         await update.message.reply_text(f"Could not find @{old_user} in the flatmate list.")
 
@@ -399,7 +413,13 @@ async def on_bot_added_to_group(update: Update, context: ContextTypes.DEFAULT_TY
             gc = db.get_or_create_group_chat(chat_id)
             if not gc["bot_introduced"]:
                 db.set_bot_introduced(chat_id)
-                await context.bot.send_message(chat_id=chat_id, text=msg.INTRO, parse_mode="Markdown")
+                config = load_config()
+                if config:
+                    db.sync_flatmates_from_config(config)
+                flatmates = db.get_active_flatmates()
+                counts = db.get_cleaning_count_per_flatmate()
+                intro = msg.build_intro_message(flatmates, counts)
+                await context.bot.send_message(chat_id=chat_id, text=intro, parse_mode="Markdown")
 
 
 async def on_new_chat_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -410,7 +430,13 @@ async def on_new_chat_members(update: Update, context: ContextTypes.DEFAULT_TYPE
             gc = db.get_or_create_group_chat(chat_id)
             if not gc["bot_introduced"]:
                 db.set_bot_introduced(chat_id)
-                await context.bot.send_message(chat_id=chat_id, text=msg.INTRO, parse_mode="Markdown")
+                config = load_config()
+                if config:
+                    db.sync_flatmates_from_config(config)
+                flatmates = db.get_active_flatmates()
+                counts = db.get_cleaning_count_per_flatmate()
+                intro = msg.build_intro_message(flatmates, counts)
+                await context.bot.send_message(chat_id=chat_id, text=intro, parse_mode="Markdown")
             break
 
 

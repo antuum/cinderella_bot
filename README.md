@@ -37,13 +37,24 @@ A Telegram bot for shared flats that manages cleaning rotation fairly. **Cindere
 ```
   ./run.sh              Foreground. Attached to terminal. Stops when you close it.
   ./run.sh -d           Daemon. Runs in background. Survives terminal close. Logs to data/cinderella.log
-  ./run.sh --install    Install autorun (systemd/launchd). Starts on login. Restarts on crash.
-  ./run.sh --auto       Try autorun first; if that fails, daemon; else foreground.
+  ./run.sh --install    Install autorun (one-time). Starts on login. Restarts on crash.
+  ./run.sh --start      Start the installed service. Use after --stop. No reinstall needed.
+  ./run.sh --stop       Pause the bot. Use --start to resume.
   ./run.sh --status     Check if the bot is running.
-  ./run.sh --stop       Stop the background or service process.
+  ./run.sh --auto       Try autorun first; if that fails, daemon; else foreground.
 ```
 
-**Autorun** — On Linux: systemd user service (`~/.config/systemd/user/`). On macOS: launchd (`~/Library/LaunchAgents/`). No sudo. On headless Linux servers: `loginctl enable-lingering $USER` may be needed so the service runs without an active login.
+**Stop / Start workflow**
+
+```
+  1. ./run.sh --stop    — Pause the bot (maintenance, config change, etc.)
+  2. Edit config, restart machine, whatever you need
+  3. ./run.sh --start   — Resume. No --install. The service stays installed.
+```
+
+If you never ran `--install`, `--start` will fail. Run `--install` once to set up autorun. After that, `--stop` and `--start` are all you need.
+
+**Autorun** — Linux: systemd (`~/.config/systemd/user/`). macOS: launchd (`~/Library/LaunchAgents/`). No sudo. Headless Linux: `loginctl enable-lingering $USER` if the service doesn't run without login.
 
 **Daemon** — Writes PID to `data/cinderella.pid`. Does not survive reboot; use `--install` for that.
 
@@ -85,11 +96,14 @@ cp config.example.json config.json
 ```bash
 ./run.sh              # Foreground (default)
 ./run.sh -d           # Background (survives terminal close)
-./run.sh --install    # Install autorun (systemd/launchd) and start
-./run.sh --auto       # Try autorun, else background, else foreground
+./run.sh --install    # Install autorun (one-time); bot starts on login
+./run.sh --start      # Start the service (use after --stop; no reinstall)
+./run.sh --stop       # Pause the bot
 ./run.sh --status     # Check if running
-./run.sh --stop       # Stop background process
+./run.sh --auto       # Try autorun, else background, else foreground
 ```
+
+**First time:** `./run.sh --install` — installs the service, starts the bot. **Stopped it?** `./run.sh --start` — resumes. **Never** run `--install` again unless you moved the folder or reinstalled the OS.
 
 Or manually:
 
@@ -105,8 +119,9 @@ python main.py
 ```
   [*] Create a Telegram group for your flat
   [*] Add the bot as a member
-  [*] Cinderella introduces itself automatically
-  [*] Use /start in the group if it doesn't
+  [*] Cinderella introduces itself: tags everyone from config.json, shows current counters
+  [*] Each person gets @mentioned — verify your username is correct
+  [*] Use /start in the group if the intro doesn't appear
 ```
 
 ---

@@ -4,7 +4,7 @@ Friendly -> less friendly -> military -> guilt manipulation.
 Hacker-style text art, no emojis.
 """
 
-INTRO = """
+INTRO_TEMPLATE = """
     ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·
           _
         (   )
@@ -34,10 +34,30 @@ I support the routine:
 
 Admin: edit config.json and restart.
 
+{greeting}
+
+{stats}
+
     ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·
               One room at a time.
     ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·
 """
+
+
+def build_intro_message(flatmates: list, counts: dict) -> str:
+    """Build intro with personal tags and current counters."""
+    if not flatmates:
+        greeting = ""
+        stats = ""
+    else:
+        tags = " ".join(f"@{f['telegram_username']}" for f in flatmates)
+        greeting = f"Greetings, {tags}. Verify your username is correct."
+        lines = ["[STATS] **Current counters** (from invite or last replace)\n---"]
+        for f in flatmates:
+            c = counts.get(f["id"], 0)
+            lines.append(f"  [>] {f['name']} (@{f['telegram_username']}): {c} cleanings")
+        stats = "\n".join(lines)
+    return INTRO_TEMPLATE.format(greeting=greeting, stats=stats)
 
 # 33 awareness-provoking phrases per room. Short, clear, no instructions. Cycled in shuffled order.
 AWARENESS_PHRASES = [
