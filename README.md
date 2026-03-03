@@ -26,8 +26,8 @@ A Telegram bot for shared flats that manages cleaning rotation fairly. **Cindere
 ### 2. Clone the Project
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/cinderella-bot.git
-cd cinderella-bot
+git clone https://github.com/antuum/cinderella_bot.git
+cd cinderella_bot
 ```
 
 Or download the ZIP from GitHub and extract it.
