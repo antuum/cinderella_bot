@@ -21,6 +21,8 @@ The floor is swept. Tomorrow it is swept again. When sweeping, sweep — nothing
        flat cleaning system
   ═══════════════════════════════════════
 
+My mission: I am the annoying one who reminds. So you don't have to be. I externalize that role to support healthy, honest relationships among flatmates — free from unspoken resentment.
+
 I support the routine:
 
   · **Weekly schedule** — Each person, one random day. I notify when your day arrives.

@@ -107,6 +107,11 @@ def init_db():
             conn.commit()
         except sqlite3.OperationalError:
             pass
+        try:
+            conn.execute("ALTER TABLE flatmates ADD COLUMN starting_offset INTEGER DEFAULT 0")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
         conn.executescript("""
             CREATE INDEX IF NOT EXISTS idx_cleaning_flatmate ON cleaning_records(flatmate_id);
             CREATE INDEX IF NOT EXISTS idx_cleaning_room ON cleaning_records(room_id);
@@ -165,7 +170,7 @@ def sync_flatmates_from_config(config: dict):
 
 
 def replace_flatmate(old_username: str, new_name: str, new_username: str):
-    """Replace a flatmate (e.g. someone moved out). Old stays in history. Reshuffles phrase order."""
+    """Replace a flatmate (e.g. someone moved out). Old stays in history. New person gets starting_offset = min(others) so they enter rotation immediately. Reshuffles phrase order."""
     conn = get_connection()
     try:
         old = conn.execute(
@@ -174,11 +179,22 @@ def replace_flatmate(old_username: str, new_name: str, new_username: str):
         ).fetchone()
         if not old:
             return False
-        new_row = conn.execute(
-            "INSERT INTO flatmates (name, telegram_username) VALUES (?, ?)",
-            (new_name, new_username.lstrip("@"))
+        # Min real count among other active flatmates (excluding the one leaving)
+        min_row = conn.execute("""
+            SELECT COALESCE(MIN(cnt), 0) as min_cnt FROM (
+                SELECT f.id, COUNT(c.id) as cnt
+                FROM flatmates f
+                LEFT JOIN cleaning_records c ON c.flatmate_id = f.id
+                WHERE f.is_active = 1 AND f.id != ?
+                GROUP BY f.id
+            )
+        """, (old["id"],)).fetchone()
+        starting_offset = int(min_row["min_cnt"]) if min_row else 0
+        cursor = conn.execute(
+            "INSERT INTO flatmates (name, telegram_username, starting_offset) VALUES (?, ?, ?)",
+            (new_name, new_username.lstrip("@"), starting_offset)
         )
-        new_id = new_row.lastrowid
+        new_id = cursor.lastrowid
         conn.execute(
             "UPDATE flatmates SET is_active = 0, replaced_at = ?, replaced_by_id = ? WHERE id = ?",
             (datetime.utcnow().isoformat(), new_id, old["id"])
@@ -330,7 +346,7 @@ def get_monthly_stats(year: int, month: int) -> list:
 
 
 def get_cleaning_count_per_flatmate():
-    """Returns {flatmate_id: total_cleanings} for fairness."""
+    """Returns {flatmate_id: total_cleanings} — real count only. Used for /stats."""
     conn = get_connection()
     try:
         rows = conn.execute("""
@@ -339,6 +355,22 @@ def get_cleaning_count_per_flatmate():
             GROUP BY flatmate_id
         """).fetchall()
         return {r["flatmate_id"]: r["cnt"] for r in rows}
+    finally:
+        conn.close()
+
+
+def get_effective_cleaning_count_per_flatmate():
+    """Returns {flatmate_id: effective_count} for fairness. Effective = real + starting_offset. New flatmates enter rotation immediately."""
+    conn = get_connection()
+    try:
+        rows = conn.execute("""
+            SELECT f.id, COUNT(c.id) + COALESCE(f.starting_offset, 0) as effective
+            FROM flatmates f
+            LEFT JOIN cleaning_records c ON c.flatmate_id = f.id
+            WHERE f.is_active = 1
+            GROUP BY f.id
+        """).fetchall()
+        return {r["id"]: r["effective"] for r in rows}
     finally:
         conn.close()
 
@@ -496,14 +528,14 @@ def get_flatmate_by_username(username: str) -> Optional[dict]:
 
 
 def get_flatmate_with_fewest_cleanings_excluding(exclude_ids: list) -> Optional[dict]:
-    """Get active flatmate with fewest cleanings, excluding given IDs."""
+    """Get active flatmate with fewest effective cleanings, excluding given IDs. Uses effective count (real + starting_offset)."""
     conn = get_connection()
     try:
         exclude = ",".join("?" * len(exclude_ids)) if exclude_ids else "0"
         params = exclude_ids if exclude_ids else []
         row = conn.execute(f"""
             SELECT f.id, f.name, f.telegram_username,
-                   COUNT(c.id) as total_cleanings
+                   COUNT(c.id) + COALESCE(f.starting_offset, 0) as total_cleanings
             FROM flatmates f
             LEFT JOIN cleaning_records c ON c.flatmate_id = f.id
             WHERE f.is_active = 1 AND f.id NOT IN ({exclude})

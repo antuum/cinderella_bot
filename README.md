@@ -9,6 +9,8 @@
 
 A Telegram bot for shared flats that manages cleaning rotation fairly. **Cinderella** sends weekly schedules, daily reminders with tone escalation, and tracks who cleaned what so everyone does their share.
 
+**Mission:** The bot externalizes the role of the person who reminds others to clean. So you don't have to be that person. This supports healthy, honest relationships among flatmates — free from unspoken resentment.
+
 **License:** [MIT](LICENSE) — Use, modify, and share freely.
 
 ---
@@ -181,7 +183,7 @@ When someone moves out:
   4. Restart the bot
 ```
 
-The old flatmate stays in history and stats. Phrase order reshuffles on replace.
+The old flatmate stays in history and stats. Phrase order reshuffles on replace. The new person gets a starting count equal to the minimum of the others, so they enter the rotation immediately — the most proactive person stays safe.
 
 ---
 

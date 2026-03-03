@@ -45,7 +45,7 @@ def _assign_person_to_slot(slot: dict, exclude_ids: List[int] = None) -> int:
     if not flatmates:
         return 0
     exclude_ids = exclude_ids or []
-    counts = db.get_cleaning_count_per_flatmate()
+    counts = db.get_effective_cleaning_count_per_flatmate()
     available = [f for f in flatmates if f["id"] not in exclude_ids]
     if not available:
         available = flatmates
