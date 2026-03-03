@@ -6,6 +6,7 @@
 #        ./run.sh --auto       — try autorun, else daemon, else foreground
 #        ./run.sh --status     — check if running
 #        ./run.sh --stop       — stop background process
+#        ./run.sh --reset      — [testing] wipe DB, restart; send /start for intro
 
 set -e
 cd "$(dirname "$0")"
@@ -150,6 +151,21 @@ do_start() {
     fi
 }
 
+do_reset() {
+    echo "[>] Reset (testing only): wipe DB, restart. Config and .env untouched."
+    do_stop
+    if [ -f "${DATA}/cinderella.db" ]; then
+        rm -f "${DATA}/cinderella.db"
+        echo "[+] Database wiped: ${DATA}/cinderella.db"
+    else
+        echo "[>] No database file found (clean slate)"
+    fi
+    echo "[>] Starting (same as --auto: autorun if installed, else daemon, else foreground)."
+    install_autorun && exit 0
+    run_daemon && exit 0
+    run_foreground
+}
+
 do_stop() {
     if [ -f "$PIDFILE" ]; then
         PID=$(cat "$PIDFILE")
@@ -194,6 +210,9 @@ case "${1:-}" in
     --stop)
         do_stop
         ;;
+    --reset)
+        do_reset
+        ;;
     -h|--help)
         echo "Cinderella bot launcher"
         echo "  ./run.sh           Run in foreground"
@@ -203,6 +222,7 @@ case "${1:-}" in
         echo "  ./run.sh --auto    Try autorun, else background, else foreground"
         echo "  ./run.sh --status  Check if running"
         echo "  ./run.sh --stop    Stop. Use --start to resume."
+        echo "  ./run.sh --reset   [Testing] Wipe DB, restart. Send /start in group for intro."
         ;;
     *)
         run_foreground

@@ -42,7 +42,10 @@ A Telegram bot for shared flats that manages cleaning rotation fairly. **Cindere
   ./run.sh --stop       Pause the bot. Use --start to resume.
   ./run.sh --status     Check if the bot is running.
   ./run.sh --auto       Try autorun first; if that fails, daemon; else foreground.
+  ./run.sh --reset      [Testing] Wipe DB, restart. Send /start in group to re-trigger intro.
 ```
+
+**Testing reset** — `./run.sh --reset` wipes the database and restarts the bot (same start logic as `--auto`: autorun if installed, else daemon, else foreground). Config and .env are untouched. Send `/start` in your group (or remove/re-add the bot) to see the intro message again.
 
 **Stop / Start workflow**
 
@@ -101,6 +104,7 @@ cp config.example.json config.json
 ./run.sh --stop       # Pause the bot
 ./run.sh --status     # Check if running
 ./run.sh --auto       # Try autorun, else background, else foreground
+./run.sh --reset      # [Testing] Wipe DB, restart; /start in group for intro
 ```
 
 **First time:** `./run.sh --install` — installs the service, starts the bot. **Stopped it?** `./run.sh --start` — resumes. **Never** run `--install` again unless you moved the folder or reinstalled the OS.
