@@ -1,0 +1,38 @@
+{
+  "flat_name": "Our Cozy Flat",
+  "rooms": [
+    {
+      "name": "Kitchen",
+      "times_per_month": 4
+    },
+    {
+      "name": "Bathroom",
+      "times_per_month": 4
+    },
+    {
+      "name": "Living Room",
+      "times_per_month": 2
+    }
+  ],
+  "flatmates": [
+    {
+      "name": "Alice",
+      "telegram_username": "alice_flat"
+    },
+    {
+      "name": "Bob",
+      "telegram_username": "bob_flat"
+    },
+    {
+      "name": "Carol",
+      "telegram_username": "carol_flat"
+    }
+  ],
+  "weekly_report_day": "sunday",
+  "weekly_report_hour": 10,
+  "weekly_report_minute": 0,
+  "reminder_hour": 9,
+  "reminder_minute": 0,
+  "monthly_report_hour": 20,
+  "monthly_report_minute": 0
+}

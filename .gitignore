@@ -1,0 +1,11 @@
+.env
+config.json
+*.db
+__pycache__/
+*.pyc
+.Python
+venv/
+.venv/
+data/*.db
+!data/.gitkeep
+Cincerella/
