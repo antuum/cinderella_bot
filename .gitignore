@@ -7,6 +7,7 @@ __pycache__/
 venv/
 .venv/
 data/*.db
+data/*.db.migrated
 data/cinderella.json
 !data/.gitkeep
 Cincerella/
