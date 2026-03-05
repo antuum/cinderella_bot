@@ -23,7 +23,7 @@ A Telegram bot for shared flats that manages cleaning rotation fairly. **Cindere
   [>] Daily reminders    — Tags the responsible unit on cleaning day
   [>] Inline buttons     — Not today | 3 more days | Skip the week | Done [OK]
   [>] Fair rotation      — Tracks cleanings; person with fewest gets the next
-  [>] Proactive cleaning — Someone else did your turn? Logged. You rest later.
+  [>] Proactive cleaning — Step up? Logged. Tap Cleaned → choose room, or /cleaned Kitchen
   [>] Tone escalation    — Friendly -> firm -> military -> guilt
   [>] Replace flatmates  — Someone moved out? /replace keeps history
   [>] 33 awareness phrases — Rotating prompts per room; reshuffle on replace
@@ -123,10 +123,12 @@ python main.py
 ```
   [*] Create a Telegram group for your flat
   [*] Add the bot as a member
-  [*] Cinderella introduces itself: tags everyone from config.json, shows current counters
-  [*] Each person gets @mentioned — verify your username is correct
-  [*] Use /start in the group if the intro doesn't appear
+  [*] Cinderella introduces itself: tags everyone, shows counters + Quick actions buttons
+  [*] Pin that message — everyone can tap buttons (Schedule, Stats, Cleaned, History) without typing
+  [*] Use /start or /menu if the intro doesn't appear
 ```
+
+**BotFather setup** — For the best UX (command menu when typing `/`), configure your bot in @BotFather. See [BOTFATHER.md](BOTFATHER.md) for the exact steps.
 
 ---
 ```
@@ -182,10 +184,13 @@ python main.py
 
 | Command | Description |
 |---------|-------------|
-| `/start` | Start / intro (in group) |
-| `/schedule` | Show this week's cleaning schedule |
-| `/stats` | Show cleaning counts per flatmate |
+| `/start` | Intro (in group). Tags everyone, shows counters |
+| `/schedule` | This week's cleaning roster |
+| `/stats` | Cleaning counts per flatmate. [History] for full log |
+| `/history` | Full history + total points per person |
+| `/cleaned <room>` | Log proactive cleaning (e.g. `/cleaned Kitchen`) |
 | `/replace @old NewName @new` | Replace a flatmate (someone moved out) |
+| `/help` | List all commands |
 
 ---
 
@@ -213,7 +218,9 @@ The project is self-contained. Copy the folder (including `data/` if you already
   [*] ./run.sh --install   (autorun) or ./run.sh -d (daemon) or ./run.sh (foreground)
 ```
 
-The SQLite database is in `data/cinderella.db`. Logs: `data/cinderella.log`. PID: `data/cinderella.pid`.
+**Data** — Stored in `data/cinderella.json`. Human-readable; you can edit it manually if needed. On first run with existing `cinderella.db`, data is migrated to JSON and the old DB is backed up as `cinderella.db.migrated`.
+
+Logs: `data/cinderella.log`. PID: `data/cinderella.pid`.
 
 ---
 

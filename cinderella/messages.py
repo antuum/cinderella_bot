@@ -4,6 +4,21 @@ Friendly -> less friendly -> military -> guilt manipulation.
 Hacker-style text art, no emojis.
 """
 
+_ROMAN_MONTH = ("", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII")
+
+
+def format_date_display(date_str: str) -> str:
+    """Format date as Thu 5III2026 (weekday + day + Roman month + year)."""
+    from datetime import datetime
+    try:
+        dt = datetime.strptime(date_str[:10], "%Y-%m-%d")
+    except (ValueError, TypeError):
+        return date_str
+    dow = dt.strftime("%a")
+    day = dt.day
+    month_roman = _ROMAN_MONTH[dt.month] if 1 <= dt.month <= 12 else "?"
+    return f"{dow} {day}{month_roman}{dt.year}"
+
 
 def escape_md(text: str) -> str:
     """Escape characters that break Telegram Markdown parsing (e.g. underscores in usernames)."""
@@ -40,7 +55,7 @@ I support the routine:
   · **Fair rotation** — I track. Equal distribution.
   · **Proactive cleaning** — Step up for another? It counts. You rest later.
 
-Admin: edit config.json and restart.
+Use buttons below — or /menu. Pin for quick access. Admin: edit config.json and restart.
 
 {greeting}
 
@@ -150,7 +165,19 @@ DONE_MESSAGES = [
     "[+] @{username} | **{room}** done. Next: **{next_person}** for **{next_room}**.",
 ]
 
-# When someone else did it (proactive)
+# Proactive cleaning (inline): after selecting room, show points
+PROACTIVE_CLEANED_RESPONSE = """[+] @{username} | **{room}** logged. Proactive.
+
+**Your points:** {points} cleanings total."""
+
+# Proactive cleaning (no reminder, just did it) - used by /cleaned command
+PROACTIVE_CLEANING_MESSAGES = [
+    "[+] @{username} | **{room}** cleaned on your own initiative. That's how it's done. Thank you.",
+    "[OK] @{username} — stepped up without being asked. **{room}** logged. Your flatmates notice.",
+    "[+] Proactive. **{room}** done. @{username}, this is the way. Acknowledged.",
+]
+
+# When someone else did it (proactive, from reminder button)
 DONE_BY_OTHER_MESSAGES = [
     "[+] @{username} took initiative. **{room}** cleaned. Logged. Next: **{next_person}** for **{next_room}**.",
     "[OK] @{username} stepped up for **{room}**. Counts for you. Next: **{next_person}** — **{next_room}**.",
@@ -166,7 +193,7 @@ WEEKLY_HEADER = """[SCHEDULE] **Cleaning roster** ({start} – {end})
 ---
 """
 
-WEEKLY_LINE = "  [>] **{date}** | {room}: @{username}\n"
+WEEKLY_LINE = "  [>] **{date}** | {room}: @{username}\n"  # date: Thu 5III2026 format
 WEEKLY_EMPTY = "_No cleanings scheduled this week — stand down._"
 
 MONTHLY_HEADER = """[STATS] **Monthly cleaning report** — {month} {year}
@@ -177,10 +204,61 @@ _Ranked: most to least active_
 MONTHLY_LINE = "  [>] **{rank}.** @{username} — {total} cleanings\n    {room_breakdown}\n"
 MONTHLY_EMPTY = "_No cleanings recorded this month._"
 
+# Menu
+MENU_TEXT = "[>] **Quick actions** — Use buttons below. Pin this message for easy access."
+CLEANED_CHOOSE_ROOM = "Which room did you clean?"
+CLEANED_NOT_FLATMATE = "You're not in the flatmate list. Ask admin to add you to config.json."
+
+# Help
+HELP_TEXT = """
+**[>] Quick access**
+
+Use **/menu** and **pin that message** — then everyone can tap buttons without typing.
+
+**[>] Commands**
+
+/menu — Quick actions (pin this message)
+/start — Intro or menu
+/schedule — This week's roster
+/stats — Cleaning counts
+/history — Full log
+/cleaned <room> — Log cleaning (or use Cleaned button)
+/replace @old NewName @new — Replace a flatmate
+/help — This message
+"""
+
+# History
+HISTORY_HEADER = """[HISTORY] **All-time cleaning log**
+---
+"""
+HISTORY_STATS_HEADER = "[>] **Total points** (all time)\n---\n"
+HISTORY_LINE = "  {date} · {room} · {name}\n"
+
+
+def format_history(stats_lines: list, history_lines: list, limit: int = 50) -> str:
+    """Build history message: total points per person, then chrono log."""
+    lines = [HISTORY_HEADER, HISTORY_STATS_HEADER]
+    lines.extend(stats_lines)
+    lines.append("\n---\n**Recent cleanings** (newest first)\n---\n")
+    lines.extend(history_lines[:limit])
+    if len(history_lines) > limit:
+        lines.append(f"\n_... and {len(history_lines) - limit} more_")
+    return "".join(lines)
+
+
+def format_history_line(record: dict) -> str:
+    """Format single history record with date (Thu 5III2026 style)."""
+    date_str = record.get("date") or (record.get("cleaned_at", "")[:10] if record.get("cleaned_at") else "?")
+    date_display = format_date_display(date_str) if date_str and date_str != "?" else "?"
+    return HISTORY_LINE.format(
+        date=date_display,
+        room=escape_md(record.get("room_name", "?")),
+        name=escape_md(record.get("flatmate_name", "?")),
+    )
+
 
 def format_monthly_stats(year: int, month: int, stats: list) -> str:
-    from calendar import month_name
-    month_str = month_name[month]
+    month_str = _ROMAN_MONTH[month] if 1 <= month <= 12 else str(month)
     if not stats:
         return MONTHLY_HEADER.format(month=month_str, year=year) + MONTHLY_EMPTY
     lines = [MONTHLY_HEADER.format(month=month_str, year=year)]

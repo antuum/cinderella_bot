@@ -154,12 +154,15 @@ do_start() {
 do_reset() {
     echo "[>] Reset (testing only): wipe DB, restart. Config and .env untouched."
     do_stop
-    if [ -f "${DATA}/cinderella.db" ]; then
-        rm -f "${DATA}/cinderella.db"
-        echo "[+] Database wiped: ${DATA}/cinderella.db"
-    else
-        echo "[>] No database file found (clean slate)"
-    fi
+    wiped=0
+    for f in cinderella.db cinderella.json; do
+        if [ -f "${DATA}/$f" ]; then
+            rm -f "${DATA}/$f"
+            echo "[+] Wiped: ${DATA}/$f"
+            wiped=1
+        fi
+    done
+    [ "$wiped" = 1 ] || echo "[>] No data files found (clean slate)"
     echo "[>] Starting (same as --auto: autorun if installed, else daemon, else foreground)."
     install_autorun && exit 0
     run_daemon && exit 0
