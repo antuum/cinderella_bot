@@ -12,5 +12,7 @@ data/cinderella.json
 data/cinderella.json.legacy
 data/spaces/
 data/spaces_index.json
+data/suggestions.json
+data/feedback.json
 !data/.gitkeep
 Cincerella/

@@ -28,6 +28,7 @@ A Telegram bot for shared flats that manages cleaning rotation fairly. **Cindere
   [>] Replace flatmates  — Someone moved out? /replace keeps history
   [>] 33 awareness phrases — Rotating prompts per room; reshuffle on replace
   [>] New person = min count — Enters rotation immediately; proactive people stay safe
+  [>] Feedback channel    — Users send suggestions, comments, feedback; stored + optionally forwarded
 ```
 
 ---
@@ -87,7 +88,9 @@ Or download the ZIP from GitHub and extract it.
 ```bash
 # Create .env with your bot token
 cp .env.example .env
-# Edit .env: TELEGRAM_BOT_TOKEN=your_token_here
+# Edit .env:
+#   TELEGRAM_BOT_TOKEN=your_token_here
+#   FEEDBACK_FORWARD_CHAT_ID=123456789   # Optional: your Telegram user ID to receive feedback
 
 # Create config from example
 cp config.example.json config.json
@@ -134,6 +137,15 @@ python main.py
 ```
   ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·
 ```
+
+---
+
+## Environment variables (`.env`)
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `TELEGRAM_BOT_TOKEN` | Yes | Bot API token from @BotFather |
+| `FEEDBACK_FORWARD_CHAT_ID` | No | Your Telegram user ID to receive forwarded feedback (suggestions, comments) from users. Get ID via @userinfobot. Omit to only store feedback in `data/feedback.json`. |
 
 ---
 
@@ -191,19 +203,53 @@ python main.py
 | `/history` | Full history + total points per person |
 | `/cleaned <room>` | Log proactive cleaning (e.g. `/cleaned Kitchen`) |
 | `/replace @old NewName @new` | Replace a flatmate (someone moved out) |
+| `/feedback <message>` | Send feedback, suggestions, or comments to the bot maintainer |
+| `/suggest <message>` | Alias for `/feedback` — same behaviour |
 | `/help` | List all commands |
 
 ---
 
 ## Inline Button Options
 
-When reminded about a cleaning:
+**Main menu** (Help, Settings, etc.):
+
+```
+  [>] Help — Commands and tips; includes "Feedback & suggestions" button
+  [>] Settings — Create or edit rooms and members
+```
+
+**When reminded about a cleaning:**
 
 ```
   [>] Not today   — Remind again tomorrow
   [>] 3 more days — Remind in 3 days
   [>] Skip the week — Reassign to another flatmate
   [>] Done [OK]   — Anyone can mark it; counts for the person who clicked
+```
+
+---
+
+## Feedback (suggestions, comments)
+
+Users can send feedback in two ways:
+
+1. **In the group** — Use `/feedback <message>` or `/suggest <message>` (e.g. `/feedback Add a dark mode`)
+2. **Direct message to the bot** — Start a private chat with the bot and send any plain text; it is treated as feedback
+
+All feedback is stored in `data/feedback.json` (not committed to git). Each entry has: `id`, `text`, `user_id`, `username`, `first_name`, `chat_id`, `source` (e.g. `command` or `dm`), `created_at`.
+
+**Forwarding to the maintainer** — If you set `FEEDBACK_FORWARD_CHAT_ID` in `.env` to your Telegram user ID, each piece of feedback is also forwarded to you as:
+
+```
+💡 **Feedback** from Name (@username)
+
+<user's message>
+```
+
+To get your user ID: message @userinfobot on Telegram, or inspect a forwarded message. Add to `.env`:
+
+```
+FEEDBACK_FORWARD_CHAT_ID=123456789
 ```
 
 ---
@@ -230,11 +276,12 @@ The project is self-contained. Copy the folder (including `data/` if you already
 ```
   [*] Copy the whole folder
   [*] Set TELEGRAM_BOT_TOKEN in .env
+  [*] Set FEEDBACK_FORWARD_CHAT_ID in .env (optional; to receive user feedback)
   [*] Adjust config.json if needed
   [*] ./run.sh --install   (autorun) or ./run.sh -d (daemon) or ./run.sh (foreground)
 ```
 
-**Data** — Stored in `data/spaces/` (one JSON file per group: `YYYY-MM-DD_HH-MM-SS_{chat_id}_{name}.json`) and `data/spaces_index.json`. On first run with existing `cinderella.json` or `cinderella.db`, data is migrated to per-space format and legacy files are backed up.
+**Data** — Stored in `data/spaces/` (one JSON file per group: `YYYY-MM-DD_HH-MM-SS_{chat_id}_{name}.json`) and `data/spaces_index.json`. Feedback from users is stored in `data/feedback.json`. On first run with existing `cinderella.json` or `cinderella.db`, data is migrated to per-space format and legacy files are backed up. If you previously had `data/suggestions.json`, it is migrated to `data/feedback.json` on first load.
 
 Logs: `data/cinderella.log`. PID: `data/cinderella.pid`.
 

@@ -3,6 +3,7 @@ Telegram bot handlers for Cinderella.
 """
 
 import json
+import os
 import random
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -21,6 +22,7 @@ from telegram.ext import (
 import cinderella.database as db
 import cinderella.messages as msg
 import cinderella.scheduler as sched
+import cinderella.feedback as feedback_mod
 
 # Paths
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -36,12 +38,14 @@ def _load_config_file() -> dict:
     return {}
 
 
+CLEANED_BUTTON_LABEL = "☑ Cleaned"
+
 def _main_menu_keyboard(chat_id: int = None):
     """Main quick-actions menu. chat_id used for consistency (not in callback)."""
     rows = [
         [InlineKeyboardButton("Schedule", callback_data="show_schedule"),
          InlineKeyboardButton("Stats", callback_data="show_stats")],
-        [InlineKeyboardButton("Cleaned", callback_data="cleaned"),
+        [InlineKeyboardButton(CLEANED_BUTTON_LABEL, callback_data="cleaned"),
          InlineKeyboardButton("History", callback_data="show_history")],
         [InlineKeyboardButton("Help", callback_data="show_help"),
          InlineKeyboardButton("Settings", callback_data="show_settings")],
@@ -69,6 +73,27 @@ def _track_seen_in_group(chat_id: int, user) -> None:
             db.add_seen_in_group(chat_id, user.id, username, first_name)
         except Exception:
             pass
+
+
+async def _ensure_members_from_group(context, chat_id: int) -> None:
+    """Seed members from group administrators when space has none. Per-group, no config."""
+    if db.space_has_members(chat_id):
+        return
+    try:
+        admins = await context.bot.get_chat_administrators(chat_id)
+        users = []
+        for cm in admins:
+            u = cm.user
+            if u.is_bot:
+                continue
+            username = (u.username or "").strip().lower()
+            if not username:
+                continue
+            users.append({"username": username, "first_name": (u.first_name or "").strip(), "user_id": u.id})
+        if users:
+            db.sync_members_from_group_users(chat_id, users)
+    except Exception:
+        pass
 
 
 def _keyboard_setup_reminder_silent():
@@ -100,7 +125,7 @@ async def _handle_show_settings(query, chat_id: int):
     await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
-async def _handle_settings_create(query, chat_id: int):
+async def _handle_settings_create(query, chat_id: int, back_to: str = "show_settings"):
     """Step 1: Add room. Quick add or Custom."""
     text = "[>] **Add a room** — Choose or add custom (use /room Name for custom names)."
     rooms = db.get_rooms(chat_id)
@@ -110,30 +135,28 @@ async def _handle_settings_create(query, chat_id: int):
     for name in quick:
         # Skip if already exists (case-insensitive)
         if not any(r["name"].lower() == name.lower() for r in rooms):
-            row.append(InlineKeyboardButton(name, callback_data=f"s_add:{name}"))
+            row.append(InlineKeyboardButton(name, callback_data=f"s_add:{name}:{back_to}"))
         if len(row) >= 2:
             keyboard.append(row)
             row = []
     if row:
         keyboard.append(row)
-    keyboard.append([InlineKeyboardButton("Custom name (/room Name)", callback_data="s_add:custom")])
-    keyboard.append([InlineKeyboardButton("← Back", callback_data="show_settings")])
-    if not rooms:
+    keyboard.append([InlineKeyboardButton("Custom name (/room Name)", callback_data=f"s_add:custom:{back_to}")])
+    keyboard.append([InlineKeyboardButton("← Back", callback_data=back_to)])
+    if not rooms and back_to == "show_settings":
         keyboard.append([InlineKeyboardButton("Skip (add later)", callback_data="s_create_done")])
     await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def _handle_settings_add_room(query, chat_id: int, data: str):
     """Add room from quick-add or after custom. Then ask for times."""
-    try:
-        name = data.split(":", 1)[1]
-    except IndexError:
-        await query.answer("Error")
-        return
+    parts = data.split(":", 2)
+    name = parts[1] if len(parts) > 1 else ""
+    back_to = parts[2] if len(parts) > 2 else "settings_create"
     if name == "custom":
         await query.edit_message_text(
             "Use /room <Name> to add a room with a custom name.\nExample: /room Pantry",
-            reply_markup=_settings_back_keyboard(),
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("← Back", callback_data=back_to)]]),
         )
         return
     try:
@@ -141,7 +164,7 @@ async def _handle_settings_add_room(query, chat_id: int, data: str):
     except ValueError as e:
         await query.answer(str(e))
         return
-    text = f"[>] Added **{msg.escape_md(room['name'])}**. Set times per month:"
+    text = f"[>] Added **{msg.escape_md(room['name'])}**. Set times per month (and cleaning types):"
     keyboard = [
         [InlineKeyboardButton("1", callback_data=f"s_t:{room['id']}:1"),
          InlineKeyboardButton("2", callback_data=f"s_t:{room['id']}:2"),
@@ -150,7 +173,8 @@ async def _handle_settings_add_room(query, chat_id: int, data: str):
          InlineKeyboardButton("5", callback_data=f"s_t:{room['id']}:5"),
          InlineKeyboardButton("6", callback_data=f"s_t:{room['id']}:6")],
         [InlineKeyboardButton("7–28", callback_data=f"s_t_custom:{room['id']}")],
-        [InlineKeyboardButton("← Back", callback_data="settings_create")],
+        [InlineKeyboardButton("Edit cleaning types", callback_data=f"s_ct_show:{room['id']}")],
+        [InlineKeyboardButton("← Back", callback_data=back_to)],
     ]
     await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -166,7 +190,10 @@ async def _handle_settings_room_times(query, chat_id: int, data: str):
     if not room:
         await query.answer("Room not found")
         return
-    text = f"[>] **{msg.escape_md(room['name'])}** — times per month:"
+    types_preview = ", ".join(room.get("cleaning_types", [])[:3]) or "none"
+    if len(room.get("cleaning_types", [])) > 3:
+        types_preview += "..."
+    text = f"[>] **{msg.escape_md(room['name'])}** — times per month: **{room['times_per_month']}**\n_Cleaning types: {types_preview}_"
     keyboard = [
         [InlineKeyboardButton("1", callback_data=f"s_t:{room_id}:1"),
          InlineKeyboardButton("2", callback_data=f"s_t:{room_id}:2"),
@@ -175,8 +202,9 @@ async def _handle_settings_room_times(query, chat_id: int, data: str):
          InlineKeyboardButton("5", callback_data=f"s_t:{room_id}:5"),
          InlineKeyboardButton("6", callback_data=f"s_t:{room_id}:6")],
         [InlineKeyboardButton("7–28", callback_data=f"s_t_custom:{room_id}")],
+        [InlineKeyboardButton("Edit cleaning types", callback_data=f"s_ct_show:{room_id}")],
         [InlineKeyboardButton("Remove room", callback_data=f"s_rm:{room_id}")],
-        [InlineKeyboardButton("← Back", callback_data="settings_edit")],
+        [InlineKeyboardButton("← Back", callback_data="settings_rooms")],
     ]
     await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -221,7 +249,42 @@ async def _handle_settings_set_times(query, chat_id: int, data: str):
     room = next((r for r in db.get_rooms(chat_id) if r["id"] == room_id), None)
     name = room["name"] if room else "Room"
     await query.answer(f"Set to {tpm} times/month")
-    await _handle_settings_edit(query, chat_id)
+    await _handle_settings_rooms(query, chat_id)
+
+
+async def _handle_cleaning_types_edit(query, chat_id: int, room_id: int):
+    """Show cleaning type toggles for room. Tap to add/remove from room."""
+    room = next((r for r in db.get_rooms(chat_id) if r["id"] == room_id), None)
+    if not room:
+        await query.answer("Room not found")
+        return
+    selected = set(room.get("cleaning_types", []))
+    text = f"[>] **{msg.escape_md(room['name'])}** — which cleaning tasks apply?\n\nTap to toggle. Selected types will appear when logging Cleaned."
+    keyboard = []
+    for idx, preset in enumerate(msg.CLEANING_TYPE_PRESETS):
+        label = f"✓ {preset}" if preset in selected else preset
+        keyboard.append([InlineKeyboardButton(label, callback_data=f"s_ct_toggle:{room_id}:{idx}")])
+    keyboard.append([InlineKeyboardButton("← Back", callback_data=f"settings_room_times:{room_id}")])
+    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def _handle_cleaning_type_toggle(query, chat_id: int, room_id: int, idx: int):
+    """Toggle preset at idx for room's cleaning types."""
+    if idx < 0 or idx >= len(msg.CLEANING_TYPE_PRESETS):
+        await query.answer("Invalid")
+        return
+    preset = msg.CLEANING_TYPE_PRESETS[idx]
+    room = next((r for r in db.get_rooms(chat_id) if r["id"] == room_id), None)
+    if not room:
+        await query.answer("Room not found")
+        return
+    types_list = list(room.get("cleaning_types", []))
+    if preset in types_list:
+        types_list.remove(preset)
+    else:
+        types_list.append(preset)
+    db.update_room_cleaning_types(chat_id, room_id, types_list)
+    await _handle_cleaning_types_edit(query, chat_id, room_id)
 
 
 # Fallback: 33 entries (one per GMT offset), extended descriptions. Override via config.json "timezones". No Moscow.
@@ -263,30 +326,54 @@ _DEFAULT_TIMEZONES = [
 
 
 async def _handle_settings_edit(query, chat_id: int):
-    """Edit: list rooms (tap to set times), list members (tap to remove/replace)."""
-    rooms = db.get_rooms(chat_id)
-    members = db.get_active_flatmates(chat_id)
+    """Edit: choose Rooms, Members, or Set timezone."""
     settings = db.get_space_settings(chat_id)
     tz = settings.get("timezone", "Europe/Berlin")
-    lines = [f"[>] **Edit shared space**\n_Timezone: {tz}_\n"]
+    text = f"[>] **Edit shared space**\n_Timezone: {tz}_"
+    keyboard = [
+        [InlineKeyboardButton("Rooms", callback_data="settings_rooms")],
+        [InlineKeyboardButton("Members", callback_data="settings_members")],
+        [InlineKeyboardButton("Set timezone", callback_data="s_tz_show")],
+        [InlineKeyboardButton("← Back", callback_data="show_settings")],
+    ]
+    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def _handle_settings_rooms(query, chat_id: int):
+    """Rooms list with Add room at end."""
+    rooms = db.get_rooms(chat_id)
+    text = "[>] **Rooms** — tap to edit frequency and cleaning types."
     keyboard = []
-    if rooms:
-        lines.append("**Rooms** (tap to set cleaning frequency):")
-        for r in rooms:
-            keyboard.append([InlineKeyboardButton(f"{r['name']} ({r['times_per_month']}×/mo)", callback_data=f"settings_room_times:{r['id']}")])
-    if members:
-        lines.append("\n**Members** (tap to remove or replace):")
-        for m in members:
-            keyboard.append([InlineKeyboardButton(f"{m['name']} (@{m['telegram_username']})", callback_data=f"settings_member:{m['id']}")])
-    keyboard.append([InlineKeyboardButton("Add room", callback_data="settings_create")])
-    row_add = [InlineKeyboardButton("Add me", callback_data="settings_add_me")]
+    for r in rooms:
+        keyboard.append([InlineKeyboardButton(f"{r['name']} ({r['times_per_month']}×/mo)", callback_data=f"settings_room_times:{r['id']}")])
+    keyboard.append([InlineKeyboardButton("+ Add room", callback_data="settings_add_room")])
+    keyboard.append([InlineKeyboardButton("← Back", callback_data="settings_edit")])
+    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def _handle_settings_members(query, chat_id: int):
+    """Members list with Add user at end."""
+    members = db.get_active_flatmates(chat_id)
+    text = "[>] **Members** — tap to remove or replace."
+    keyboard = []
+    for m in members:
+        keyboard.append([InlineKeyboardButton(f"{m['name']} (@{m['telegram_username']})", callback_data=f"settings_member:{m['id']}")])
+    keyboard.append([InlineKeyboardButton("+ Add user", callback_data="settings_add_user")])
+    keyboard.append([InlineKeyboardButton("← Back", callback_data="settings_edit")])
+    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def _handle_settings_add_user(query, chat_id: int):
+    """Add user options: Add from group, Add by username, Add myself."""
+    text = "[>] **Add user** — choose how to add:"
     seen = db.get_seen_in_group(chat_id)
+    keyboard = [
+        [InlineKeyboardButton("Add myself", callback_data="settings_add_me")],
+    ]
     if seen:
-        row_add.append(InlineKeyboardButton("Add from group", callback_data="s_add_from_group"))
-    keyboard.append(row_add)
-    keyboard.append([InlineKeyboardButton("Set timezone", callback_data="s_tz_show")])
-    keyboard.append([InlineKeyboardButton("← Back", callback_data="show_settings")])
-    text = "\n".join(lines) if lines else "No rooms or members yet."
+        keyboard.insert(0, [InlineKeyboardButton("Add from group", callback_data="s_add_from_group")])
+    keyboard.append([InlineKeyboardButton("Add by username", callback_data="s_add_by_username")])
+    keyboard.append([InlineKeyboardButton("← Back", callback_data="settings_members")])
     await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
@@ -310,7 +397,7 @@ async def _handle_settings_member(query, chat_id: int, data: str):
     keyboard = [
         [InlineKeyboardButton("Remove", callback_data=f"s_mem_rm:{member_id}"),
          InlineKeyboardButton("Replace", callback_data=f"s_mem_rp:{member_id}")],
-        [InlineKeyboardButton("← Back", callback_data="settings_edit")],
+        [InlineKeyboardButton("← Back", callback_data="settings_members")],
     ]
     await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -325,7 +412,7 @@ async def _handle_settings_add_me(query, chat_id: int):
     if not username:
         await query.edit_message_text(
             "You need a Telegram username to be added. Set one in Telegram Settings → Username.",
-            reply_markup=_settings_back_keyboard(),
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("← Back", callback_data="settings_members")]]),
         )
         return
     name = (user.first_name or "").strip() or username
@@ -335,12 +422,155 @@ async def _handle_settings_add_me(query, chat_id: int):
         await query.answer(str(e))
         return
     await query.answer("Added!")
-    await _handle_settings_edit(query, chat_id)
+    await _handle_settings_members(query, chat_id)
 
 
 def _menu_back_keyboard():
     """Single row: back to menu."""
     return InlineKeyboardMarkup([[InlineKeyboardButton("← Menu", callback_data="show_menu")]])
+
+
+def _help_keyboard():
+    """Help screen: Feedback & suggestions + back to menu."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Feedback & suggestions", callback_data="send_feedback")],
+        [InlineKeyboardButton("← Menu", callback_data="show_menu")],
+    ])
+
+
+def _cleaned_sel_key(chat_id: int, room_id: int, user_id: int) -> str:
+    return f"cleaned_sel:{chat_id}:{room_id}:{user_id}"
+
+
+async def _show_cleaned_tasks(query, context, chat_id: int, room_id: int, flatmate: dict, room: dict, assignment_id: int = None, supplement_mode: bool = False):
+    """Show task checkboxes for logging cleaned. assignment_id when from reminder. supplement_mode = add types to existing record."""
+    user_id = query.from_user.id if query.from_user else 0
+    key = _cleaned_sel_key(chat_id, room_id, user_id)
+    selected = context.chat_data.get(key, set())
+    if assignment_id is not None:
+        context.chat_data[f"done_assignment:{chat_id}:{user_id}"] = assignment_id
+    types_list = room.get("cleaning_types") or []
+    text = f"[>] **{msg.escape_md(room['name'])}** — {msg.CLEANED_SUPPLEMENT_TASKS}" if supplement_mode else f"[>] **{msg.escape_md(room['name'])}** — {msg.CLEANED_SELECT_TASKS}"
+    keyboard = []
+    for idx, t in enumerate(types_list):
+        label = f"✓ {t}" if idx in selected else t
+        cb = f"cl_t:{room_id}:{idx}"[:64]
+        keyboard.append([InlineKeyboardButton(label, callback_data=cb)])
+    keyboard.append([InlineKeyboardButton(msg.CLEANED_CONFIRM, callback_data=f"cl_confirm:{room_id}")])
+    cancel_cb = "cleaned"
+    if assignment_id is not None:
+        cancel_cb = f"show_menu"
+    keyboard.append([InlineKeyboardButton("← Cancel", callback_data=cancel_cb)])
+    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+def _finish_cleaned_record(context, chat_id: int, user_id: int, room_id: int, flatmate: dict, room: dict,
+                          types_done: list, was_assigned: bool = False):
+    """Common finish: update assignment if any, record, clear chat_data, return (text, from_assignment)."""
+    assignment_id = context.chat_data.pop(f"done_assignment:{chat_id}:{user_id}", None)
+    if assignment_id:
+        db.update_assignment_status(chat_id, assignment_id, "done")
+    start, end = sched.get_week_range(datetime.now())
+    assignment = db.get_pending_assignment_for_room_in_week(chat_id, room_id, start, end)
+    if assignment and not assignment_id:
+        db.update_assignment_status(chat_id, assignment["id"], "done")
+    db.record_cleaning(chat_id, room_id, flatmate["id"], was_assigned=was_assigned, cleaning_types_done=types_done)
+    key = _cleaned_sel_key(chat_id, room_id, user_id)
+    context.chat_data.pop(key, None)
+    if assignment_id:
+        uname = flatmate.get("telegram_username", "?")
+        return random.choice(msg.DONE_MESSAGES).format(
+            username=msg.escape_md(uname),
+            room=msg.escape_md(room["name"]),
+            next_person="?",
+            next_room="?",
+        ), True
+    counts = db.get_cleaning_count_per_flatmate(chat_id)
+    points = counts.get(flatmate["id"], 0)
+    return msg.PROACTIVE_CLEANED_RESPONSE.format(
+        username=msg.escape_md(flatmate.get("telegram_username", "?")),
+        room=msg.escape_md(room["name"]),
+        points=points,
+    ), False
+
+
+async def _handle_cleaned_task_toggle(query, context, chat_id: int, room_id: int, idx: int):
+    """Toggle task at idx. If all selected, auto-save."""
+    room = next((r for r in db.get_rooms(chat_id) if r["id"] == room_id), None)
+    if not room:
+        await query.answer("Room not found")
+        return
+    types_list = room.get("cleaning_types") or []
+    if idx < 0 or idx >= len(types_list):
+        await query.answer("Invalid")
+        return
+    user_id = query.from_user.id if query.from_user else 0
+    key = _cleaned_sel_key(chat_id, room_id, user_id)
+    selected = context.chat_data.get(key, set())
+    if idx in selected:
+        selected.remove(idx)
+    else:
+        selected.add(idx)
+    context.chat_data[key] = selected
+    flatmate = db.get_flatmate_by_username(chat_id, (query.from_user.username or "").lstrip("@") if query.from_user else "")
+    if not flatmate:
+        await query.answer("Not a member")
+        return
+    if len(selected) == len(types_list):
+        types_done = [types_list[i] for i in selected]
+        supplement = context.chat_data.pop(f"supplement:{chat_id}:{room_id}:{user_id}", False)
+        if supplement:
+            db.update_cleaning_record_types(chat_id, room_id, flatmate["id"], types_done)
+            context.chat_data.pop(_cleaned_sel_key(chat_id, room_id, user_id), None)
+            text = msg.CLEANED_SUPPLEMENT_DONE.format(room=msg.escape_md(room["name"]))
+            await query.edit_message_text(text, parse_mode="Markdown", reply_markup=_menu_back_keyboard())
+        else:
+            was_assigned = f"done_assignment:{chat_id}:{user_id}" in context.chat_data
+            try:
+                text, from_assignment = _finish_cleaned_record(context, chat_id, user_id, room_id, flatmate, room, types_done, was_assigned=was_assigned)
+            except ValueError as e:
+                await query.edit_message_text(f"[!] {e}", reply_markup=_menu_back_keyboard())
+                return
+            if from_assignment:
+                await query.edit_message_text(text, parse_mode="Markdown")
+            else:
+                await query.edit_message_text(text, parse_mode="Markdown", reply_markup=_menu_back_keyboard())
+    else:
+        supplement = context.chat_data.get(f"supplement:{chat_id}:{room_id}:{user_id}", False)
+        await _show_cleaned_tasks(query, context, chat_id, room_id, flatmate, room, supplement_mode=supplement)
+
+
+async def _handle_cleaned_confirm(query, context, chat_id: int, room_id: int):
+    """Confirm partial selection and save."""
+    room = next((r for r in db.get_rooms(chat_id) if r["id"] == room_id), None)
+    if not room:
+        await query.answer("Room not found")
+        return
+    user_id = query.from_user.id if query.from_user else 0
+    selected = context.chat_data.get(_cleaned_sel_key(chat_id, room_id, user_id), set())
+    flatmate = db.get_flatmate_by_username(chat_id, (query.from_user.username or "").lstrip("@") if query.from_user else "")
+    if not flatmate:
+        await query.edit_message_text(msg.CLEANED_NOT_MEMBER, reply_markup=_menu_back_keyboard())
+        return
+    types_list = room.get("cleaning_types") or []
+    types_done = [types_list[i] for i in selected if 0 <= i < len(types_list)]
+    supplement = context.chat_data.pop(f"supplement:{chat_id}:{room_id}:{user_id}", False)
+    if supplement:
+        db.update_cleaning_record_types(chat_id, room_id, flatmate["id"], types_done)
+        context.chat_data.pop(_cleaned_sel_key(chat_id, room_id, user_id), None)
+        text = msg.CLEANED_SUPPLEMENT_DONE.format(room=msg.escape_md(room["name"]))
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=_menu_back_keyboard())
+        return
+    was_assigned = f"done_assignment:{chat_id}:{user_id}" in context.chat_data
+    try:
+        text, from_assignment = _finish_cleaned_record(context, chat_id, user_id, room_id, flatmate, room, types_done, was_assigned=was_assigned)
+    except ValueError as e:
+        await query.edit_message_text(f"[!] {e}", reply_markup=_menu_back_keyboard())
+        return
+    if from_assignment:
+        await query.edit_message_text(text, parse_mode="Markdown")
+    else:
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=_menu_back_keyboard())
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -370,10 +600,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     db.set_bot_introduced(chat_id)
-    config = _load_config_file()
-    if config:
-        db.sync_flatmates_from_config(chat_id, config)
-        db.sync_rooms_from_config(chat_id, config)
+    await _ensure_members_from_group(context, chat_id)
     flatmates = db.get_active_flatmates(chat_id)
     counts = db.get_cleaning_count_per_flatmate(chat_id)
     if db.space_has_zero_rooms(chat_id):
@@ -494,11 +721,20 @@ async def cmd_cleaned(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg.CLEANED_NOT_MEMBER, reply_markup=_menu_back_keyboard())
         return
 
-    start, end = sched.get_week_range(datetime.now())
-    assignment = db.get_pending_assignment_for_room_in_week(chat_id, room["id"], start, end)
-    if assignment:
-        db.update_assignment_status(chat_id, assignment["id"], "done")
-    db.record_cleaning(chat_id, room["id"], flatmate["id"], was_assigned=False)
+    ok, cap_reason = db.can_record_room_cleaning(chat_id, room["id"])
+    if not ok:
+        await update.message.reply_text(f"[!] {cap_reason}", reply_markup=_menu_back_keyboard())
+        return
+
+    try:
+        start, end = sched.get_week_range(datetime.now())
+        assignment = db.get_pending_assignment_for_room_in_week(chat_id, room["id"], start, end)
+        if assignment:
+            db.update_assignment_status(chat_id, assignment["id"], "done")
+        db.record_cleaning(chat_id, room["id"], flatmate["id"], was_assigned=False)
+    except ValueError as e:
+        await update.message.reply_text(f"[!] {e}", reply_markup=_menu_back_keyboard())
+        return
     counts = db.get_cleaning_count_per_flatmate(chat_id)
     points = counts.get(flatmate["id"], 0)
 
@@ -538,8 +774,94 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         msg.HELP_TEXT.strip(),
         parse_mode="Markdown",
-        reply_markup=_menu_back_keyboard(),
+        reply_markup=_help_keyboard(),
     )
+
+
+def _get_forward_chat_id() -> int | None:
+    """Admin chat ID for forwarding feedback. Set FEEDBACK_FORWARD_CHAT_ID in env."""
+    raw = os.getenv("FEEDBACK_FORWARD_CHAT_ID")
+    if not raw:
+        return None
+    try:
+        return int(raw.strip())
+    except ValueError:
+        return None
+
+
+async def _process_feedback(
+    context: ContextTypes.DEFAULT_TYPE,
+    text: str,
+    user_id: int,
+    username: str,
+    first_name: str,
+    chat_id: int,
+    source: str,
+) -> bool:
+    """Store feedback and optionally forward. Returns True on success."""
+    text = str(text).strip()[:2000]
+    if not text:
+        return False
+    feedback_mod.save_feedback(
+        text=text,
+        user_id=user_id,
+        username=username or "",
+        first_name=first_name or "",
+        chat_id=chat_id,
+        source=source,
+    )
+    forward_chat = _get_forward_chat_id()
+    if forward_chat and context.bot:
+        display = f"{first_name or 'Unknown'}" + (f" (@{username})" if username else "")
+        forwarded = f"💡 **Feedback** from {display}\n\n{text}"
+        try:
+            await context.bot.send_message(
+                chat_id=forward_chat,
+                text=forwarded,
+                parse_mode="Markdown",
+            )
+        except Exception:
+            pass
+    return True
+
+
+async def cmd_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /feedback and /suggest <message> — store and forward feedback, suggestions, comments."""
+    user = update.effective_user
+    chat = update.effective_chat
+    text = " ".join(context.args or []).strip() if context.args else ""
+    if not text:
+        await update.message.reply_text(msg.FEEDBACK_EMPTY)
+        return
+    user_id = user.id if user else 0
+    username = (user.username or "").lstrip("@") if user else ""
+    first_name = (user.first_name or "").strip() if user else ""
+    chat_id = chat.id if chat else None
+    ok = await _process_feedback(
+        context, text, user_id, username, first_name, chat_id, source="command"
+    )
+    if ok:
+        await update.message.reply_text(msg.FEEDBACK_SENT)
+
+
+async def on_private_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle plain text in private chat as feedback (suggestions, comments, general feedback)."""
+    if not update.message or not update.message.text:
+        return
+    text = update.message.text.strip()
+    if not text or text.startswith("/"):
+        return
+    user = update.effective_user
+    chat = update.effective_chat
+    user_id = user.id if user else 0
+    username = (user.username or "").lstrip("@") if user else ""
+    first_name = (user.first_name or "").strip() if user else ""
+    chat_id = chat.id if chat else None
+    ok = await _process_feedback(
+        context, text, user_id, username, first_name, chat_id, source="dm"
+    )
+    if ok:
+        await update.message.reply_text(msg.FEEDBACK_SENT)
 
 
 async def cmd_room(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -690,6 +1012,22 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _handle_settings_edit(query, chat_id)
         return
 
+    if data == "settings_rooms":
+        await _handle_settings_rooms(query, chat_id)
+        return
+
+    if data == "settings_members":
+        await _handle_settings_members(query, chat_id)
+        return
+
+    if data == "settings_add_user":
+        await _handle_settings_add_user(query, chat_id)
+        return
+
+    if data == "settings_add_room":
+        await _handle_settings_create(query, chat_id, back_to="settings_rooms")
+        return
+
     if data.startswith("s_add:"):
         await _handle_settings_add_room(query, chat_id, data)
         return
@@ -702,12 +1040,30 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _handle_settings_set_times(query, chat_id, data)
         return
 
+    if data.startswith("s_ct_show:"):
+        try:
+            room_id = int(data.split(":")[1])
+            await _handle_cleaning_types_edit(query, chat_id, room_id)
+        except (ValueError, IndexError):
+            await query.answer("Error")
+        return
+
+    if data.startswith("s_ct_toggle:"):
+        parts = data.split(":")
+        if len(parts) >= 3:
+            try:
+                room_id, idx = int(parts[1]), int(parts[2])
+                await _handle_cleaning_type_toggle(query, chat_id, room_id, idx)
+            except (ValueError, IndexError):
+                await query.answer("Error")
+        return
+
     if data.startswith("s_rm:"):
         try:
             room_id = int(data.split(":")[1])
             db.remove_room(chat_id, room_id)
             await query.answer("Room removed")
-            await _handle_settings_edit(query, chat_id)
+            await _handle_settings_rooms(query, chat_id)
         except (ValueError, IndexError):
             await query.answer("Error")
         return
@@ -724,7 +1080,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if m:
                 db.remove_member(chat_id, m["telegram_username"])
                 await query.answer("Member removed")
-            await _handle_settings_edit(query, chat_id)
+            await _handle_settings_members(query, chat_id)
         except (ValueError, IndexError):
             await query.answer("Error")
         return
@@ -732,7 +1088,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("s_mem_rp:"):
         await query.edit_message_text(
             "Use /replace @old_username NewName @new_username to replace a member.",
-            reply_markup=_settings_back_keyboard(),
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("← Back", callback_data="settings_members")]]),
         )
         return
 
@@ -743,7 +1099,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "s_add_from_group":
         seen = db.get_seen_in_group(chat_id)
         if not seen:
-            await query.edit_message_text("No one from the group has interacted yet.", reply_markup=_settings_back_keyboard())
+            await query.edit_message_text("No one from the group has interacted yet.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("← Back", callback_data="settings_members")]]))
             return
         text = "[>] **Add member** — tap to add:"
         keyboard = []
@@ -755,8 +1111,15 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if cb.endswith(":"):
                 continue
             keyboard.append([InlineKeyboardButton(label, callback_data=cb)])
-        keyboard.append([InlineKeyboardButton("← Back", callback_data="settings_edit")])
+        keyboard.append([InlineKeyboardButton("← Back", callback_data="settings_members")])
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        return
+
+    if data == "s_add_by_username":
+        await query.edit_message_text(
+            "Use /add @username Name to add someone by username.\nExample: /add @alice Alice",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("← Back", callback_data="settings_members")]]),
+        )
         return
 
     if data.startswith("s_add_seen:"):
@@ -775,7 +1138,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except ValueError as e:
             await query.answer(str(e))
             return
-        await _handle_settings_edit(query, chat_id)
+        await _handle_settings_members(query, chat_id)
         return
 
     if data == "s_tz_show":
@@ -873,7 +1236,15 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             msg.HELP_TEXT.strip(),
             parse_mode="Markdown",
-            reply_markup=_menu_back_keyboard(),
+            reply_markup=_help_keyboard(),
+        )
+        return
+
+    if data == "send_feedback":
+        await query.edit_message_text(
+            msg.FEEDBACK_INSTRUCTIONS,
+            parse_mode="Markdown",
+            reply_markup=_help_keyboard(),
         )
         return
 
@@ -916,19 +1287,65 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not flatmate:
             await query.edit_message_text(msg.CLEANED_NOT_MEMBER, reply_markup=_menu_back_keyboard())
             return
-        start, end = sched.get_week_range(datetime.now())
-        assignment = db.get_pending_assignment_for_room_in_week(chat_id, room_id, start, end)
-        if assignment:
-            db.update_assignment_status(chat_id, assignment["id"], "done")
-        db.record_cleaning(chat_id, room_id, flatmate["id"], was_assigned=False)
-        counts = db.get_cleaning_count_per_flatmate(chat_id)
-        points = counts.get(flatmate["id"], 0)
-        text = msg.PROACTIVE_CLEANED_RESPONSE.format(
-            username=msg.escape_md(username),
-            room=msg.escape_md(room["name"]),
-            points=points,
-        )
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=_menu_back_keyboard())
+        ok, cap_reason = db.can_record_room_cleaning(chat_id, room_id)
+        supplement_mode = False
+        if not ok:
+            start, end = sched.get_week_range(datetime.now())
+            last_rec = db.get_last_cleaning_for_room_this_week(chat_id, room_id, flatmate["id"], start, end)
+            if last_rec and room.get("cleaning_types"):
+                supplement_mode = True
+            else:
+                await query.edit_message_text(f"[!] {cap_reason}", reply_markup=_menu_back_keyboard())
+                return
+        types_list = room.get("cleaning_types") or []
+        if not types_list:
+            if supplement_mode:
+                await query.edit_message_text(f"[!] {cap_reason}", reply_markup=_menu_back_keyboard())
+                return
+            try:
+                start, end = sched.get_week_range(datetime.now())
+                assignment = db.get_pending_assignment_for_room_in_week(chat_id, room_id, start, end)
+                if assignment:
+                    db.update_assignment_status(chat_id, assignment["id"], "done")
+                db.record_cleaning(chat_id, room_id, flatmate["id"], was_assigned=False)
+            except ValueError as e:
+                await query.edit_message_text(f"[!] {e}", reply_markup=_menu_back_keyboard())
+                return
+            counts = db.get_cleaning_count_per_flatmate(chat_id)
+            points = counts.get(flatmate["id"], 0)
+            text = msg.PROACTIVE_CLEANED_RESPONSE.format(
+                username=msg.escape_md(username),
+                room=msg.escape_md(room["name"]),
+                points=points,
+            )
+            await query.edit_message_text(text, parse_mode="Markdown", reply_markup=_menu_back_keyboard())
+        else:
+            user_id = query.from_user.id if query.from_user else 0
+            key = _cleaned_sel_key(chat_id, room_id, user_id)
+            initial_selected = set()
+            if supplement_mode:
+                initial_selected = {i for i, t in enumerate(types_list) if t in (last_rec.get("cleaning_types_done") or [])}
+                context.chat_data[f"supplement:{chat_id}:{room_id}:{user_id}"] = True
+            context.chat_data[key] = initial_selected
+            await _show_cleaned_tasks(query, context, chat_id, room_id, flatmate, room, assignment_id=None, supplement_mode=supplement_mode)
+        return
+
+    if data.startswith("cl_t:"):
+        parts = data.split(":")
+        if len(parts) >= 3:
+            try:
+                room_id, idx = int(parts[1]), int(parts[2])
+                await _handle_cleaned_task_toggle(query, context, chat_id, room_id, idx)
+            except (ValueError, IndexError):
+                await query.answer("Error")
+        return
+
+    if data.startswith("cl_confirm:"):
+        try:
+            room_id = int(data.split(":")[1])
+            await _handle_cleaned_confirm(query, context, chat_id, room_id)
+        except (ValueError, IndexError):
+            await query.answer("Error")
         return
 
     if data == "show_history":
@@ -1001,13 +1418,33 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     due_date = assignment["due_date"]
 
     if action == "done":
+        ok, cap_reason = db.can_record_room_cleaning(chat_id, room_id)
+        if not ok:
+            await query.edit_message_text(f"[!] {cap_reason}")
+            return
+        room = next((r for r in db.get_rooms(chat_id) if r["id"] == room_id), None)
+        types_list = (room or {}).get("cleaning_types") or []
+        if types_list:
+            clicker = db.get_flatmate_by_username(chat_id, clicker_username)
+            flatmate = clicker or next((m for m in db.get_active_flatmates(chat_id) if m["id"] == assignment["flatmate_id"]), None)
+            if flatmate:
+                user_id = query.from_user.id if query.from_user else 0
+                key = _cleaned_sel_key(chat_id, room_id, user_id)
+                context.chat_data[key] = set()
+                room_obj = room or {"name": room_name, "cleaning_types": types_list}
+                await _show_cleaned_tasks(query, context, chat_id, room_id, flatmate, room_obj, assignment_id=assignment_id)
+            return
         clicker = db.get_flatmate_by_username(chat_id, clicker_username)
         was_assigned = clicker and clicker["id"] == assignment["flatmate_id"]
 
-        if clicker:
-            db.record_cleaning(chat_id, room_id, clicker["id"], was_assigned=was_assigned)
-        else:
-            db.record_cleaning(chat_id, room_id, assignment["flatmate_id"], was_assigned=True)
+        try:
+            if clicker:
+                db.record_cleaning(chat_id, room_id, clicker["id"], was_assigned=was_assigned)
+            else:
+                db.record_cleaning(chat_id, room_id, assignment["flatmate_id"], was_assigned=True)
+        except ValueError as e:
+            await query.edit_message_text(f"[!] {e}")
+            return
 
         db.update_assignment_status(chat_id, assignment_id, "done")
 
@@ -1232,52 +1669,44 @@ async def send_weekly_schedule(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def on_bot_added_to_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """When bot is added to a group, introduce itself."""
+    """When bot is added to a group, introduce itself. Always show intro when (re)added. Seeds members from group admins when empty."""
     if update.my_chat_member:
         cm = update.my_chat_member
         if cm.new_chat_member.status in ("member", "administrator"):
             chat_id = update.effective_chat.id
             title = (update.effective_chat.title or "").strip()
-            gc = db.get_or_create_space(chat_id, title)
-            if not gc["bot_introduced"]:
-                db.set_bot_introduced(chat_id)
-                config = _load_config_file()
-                if config:
-                    db.sync_flatmates_from_config(chat_id, config)
-                    db.sync_rooms_from_config(chat_id, config)
-                if db.space_has_setup(chat_id):
-                    flatmates = db.get_active_flatmates(chat_id)
-                    counts = db.get_cleaning_count_per_flatmate(chat_id)
-                    intro = msg.build_intro_message(flatmates, counts)
-                    await context.bot.send_message(chat_id=chat_id, text=intro, parse_mode="Markdown", reply_markup=_main_menu_keyboard(chat_id))
-                elif db.space_has_zero_rooms(chat_id):
-                    await context.bot.send_message(chat_id=chat_id, text=msg.SETUP_REMINDER_MESSAGE, parse_mode="Markdown", reply_markup=_keyboard_setup_reminder_silent())
-                else:
-                    await context.bot.send_message(chat_id=chat_id, text=msg.SETTINGS_FIRST_MESSAGE, parse_mode="Markdown", reply_markup=_settings_keyboard(chat_id))
+            db.get_or_create_space(chat_id, title)
+            db.set_bot_introduced(chat_id)
+            await _ensure_members_from_group(context, chat_id)
+            if db.space_has_setup(chat_id):
+                flatmates = db.get_active_flatmates(chat_id)
+                counts = db.get_cleaning_count_per_flatmate(chat_id)
+                intro = msg.build_intro_message(flatmates, counts)
+                await context.bot.send_message(chat_id=chat_id, text=intro, parse_mode="Markdown", reply_markup=_main_menu_keyboard(chat_id))
+            elif db.space_has_zero_rooms(chat_id):
+                await context.bot.send_message(chat_id=chat_id, text=msg.SETUP_REMINDER_MESSAGE, parse_mode="Markdown", reply_markup=_keyboard_setup_reminder_silent())
+            else:
+                await context.bot.send_message(chat_id=chat_id, text=msg.SETTINGS_FIRST_MESSAGE, parse_mode="Markdown", reply_markup=_settings_keyboard(chat_id))
 
 
 async def on_new_chat_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """When bot is added via 'Add members'."""
+    """When bot is added via 'Add members'. Always show intro when (re)added. Seeds members from group admins when empty."""
     for u in update.message.new_chat_members:
         if u.is_bot and u.id == context.bot.id:
             chat_id = update.effective_chat.id
             title = (update.effective_chat.title or "").strip()
-            gc = db.get_or_create_space(chat_id, title)
-            if not gc["bot_introduced"]:
-                db.set_bot_introduced(chat_id)
-                config = _load_config_file()
-                if config:
-                    db.sync_flatmates_from_config(chat_id, config)
-                    db.sync_rooms_from_config(chat_id, config)
-                if db.space_has_setup(chat_id):
-                    flatmates = db.get_active_flatmates(chat_id)
-                    counts = db.get_cleaning_count_per_flatmate(chat_id)
-                    intro = msg.build_intro_message(flatmates, counts)
-                    await context.bot.send_message(chat_id=chat_id, text=intro, parse_mode="Markdown", reply_markup=_main_menu_keyboard(chat_id))
-                elif db.space_has_zero_rooms(chat_id):
-                    await context.bot.send_message(chat_id=chat_id, text=msg.SETUP_REMINDER_MESSAGE, parse_mode="Markdown", reply_markup=_keyboard_setup_reminder_silent())
-                else:
-                    await context.bot.send_message(chat_id=chat_id, text=msg.SETTINGS_FIRST_MESSAGE, parse_mode="Markdown", reply_markup=_settings_keyboard(chat_id))
+            db.get_or_create_space(chat_id, title)
+            db.set_bot_introduced(chat_id)
+            await _ensure_members_from_group(context, chat_id)
+            if db.space_has_setup(chat_id):
+                flatmates = db.get_active_flatmates(chat_id)
+                counts = db.get_cleaning_count_per_flatmate(chat_id)
+                intro = msg.build_intro_message(flatmates, counts)
+                await context.bot.send_message(chat_id=chat_id, text=intro, parse_mode="Markdown", reply_markup=_main_menu_keyboard(chat_id))
+            elif db.space_has_zero_rooms(chat_id):
+                await context.bot.send_message(chat_id=chat_id, text=msg.SETUP_REMINDER_MESSAGE, parse_mode="Markdown", reply_markup=_keyboard_setup_reminder_silent())
+            else:
+                await context.bot.send_message(chat_id=chat_id, text=msg.SETTINGS_FIRST_MESSAGE, parse_mode="Markdown", reply_markup=_settings_keyboard(chat_id))
             break
 
 
@@ -1300,6 +1729,14 @@ def build_application(token: str) -> Application:
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("history", cmd_history))
     app.add_handler(CommandHandler("help", cmd_help))
+    app.add_handler(CommandHandler("feedback", cmd_feedback))
+    app.add_handler(CommandHandler("suggest", cmd_feedback))  # alias
+    app.add_handler(
+        MessageHandler(
+            filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND,
+            on_private_message,
+        )
+    )
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(ChatMemberHandler(on_bot_added_to_group, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, on_new_chat_members))

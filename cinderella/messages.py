@@ -221,6 +221,31 @@ SETTINGS_FIRST_MESSAGE = (
 )
 CLEANED_CHOOSE_ROOM = "Which room did you clean?"
 CLEANED_NOT_MEMBER = "You're not in the member list. Ask an admin to add you via Settings."
+CLEANED_SELECT_TASKS = "Check what you did. Tap to toggle. All done = auto-save; partial = tap Confirm."
+CLEANED_SUPPLEMENT_TASKS = "Add missing types to your cleaning record (no extra points):"
+CLEANED_CONFIRM = "Confirm"
+CLEANED_SUPPLEMENT_DONE = "[OK] Updated your **{room}** record. No additional points."
+
+# 16 universal cleaning tasks (broad applicability). Index = order for callback_data.
+CLEANING_TYPE_PRESETS = [
+    "Remove trash",
+    "Vacuum",
+    "Mop floors",
+    "Dust surfaces",
+    "Wipe surfaces",
+    "Clean mirrors/glass",
+    "Empty bins",
+    "Disinfect",
+    "Sweep",
+    "Organize / tidy",
+    "Clean fixtures (sink, toilet)",
+    "Clean kitchen surfaces",
+    "Change bedding",
+    "Clean windows",
+    "Take out recycling",
+    "Air out / ventilate",
+    "Other",  # Custom catch-all
+]
 
 # Help
 HELP_TEXT = """
@@ -241,7 +266,18 @@ Use **Settings** to create or edit your shared space (rooms, members, cleaning f
 /add @username Name — Add a member
 /replace @old NewName @new — Replace a member
 /help — This message
+/feedback <message> — Send feedback, suggestions, or comments
+/suggest <message> — Same as /feedback (alias)
 """
+FEEDBACK_INSTRUCTIONS = (
+    "**Feedback & suggestions**\n\n"
+    "Send your feedback, suggestions, or comments:\n\n"
+    "• Use /feedback <your message> or /suggest <message> in this group, or\n"
+    "• Send me a private message with your text.\n\n"
+    "Your feedback will be stored and forwarded to the bot maintainer."
+)
+FEEDBACK_SENT = "[OK] Your feedback was sent. Thank you!"
+FEEDBACK_EMPTY = "Please add your message: /feedback Your feedback here"
 
 # History
 HISTORY_HEADER = """[HISTORY] **All-time cleaning log**
@@ -266,11 +302,15 @@ def format_history_line(record: dict) -> str:
     """Format single history record with date (Thu 5III2026 style)."""
     date_str = record.get("date") or (record.get("cleaned_at", "")[:10] if record.get("cleaned_at") else "?")
     date_display = format_date_display(date_str) if date_str and date_str != "?" else "?"
-    return HISTORY_LINE.format(
+    base = HISTORY_LINE.format(
         date=date_display,
         room=escape_md(record.get("room_name", "?")),
         name=escape_md(record.get("flatmate_name", "?")),
     )
+    types_done = record.get("cleaning_types_done") or []
+    if types_done:
+        base += f" _({', '.join(escape_md(t) for t in types_done)})_\n"
+    return base
 
 
 def format_monthly_stats(year: int, month: int, stats: list) -> str:
