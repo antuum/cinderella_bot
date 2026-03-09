@@ -41,10 +41,10 @@ The floor is swept. Tomorrow it is swept again. When sweeping, sweep — nothing
 
   ═══════════════════════════════════════
        C I N D E R E L L A
-       flat cleaning system
+       shared space cleaning
   ═══════════════════════════════════════
 
-My mission: I am the annoying one who reminds. So you don't have to be. I externalize that role to support healthy, honest relationships among flatmates — free from unspoken resentment.
+My mission: I am the annoying one who reminds. So you don't have to be. I externalize that role to support healthy, honest relationships among members — free from unspoken resentment.
 
 I support the routine:
 
@@ -55,7 +55,7 @@ I support the routine:
   · **Fair rotation** — I track. Equal distribution.
   · **Proactive cleaning** — Step up for another? It counts. You rest later.
 
-Use buttons below — or /menu. Pin for quick access. Admin: edit config.json and restart.
+Use buttons below — or /menu. Pin for quick access. Settings to manage rooms and members.
 
 {greeting}
 
@@ -102,7 +102,7 @@ AWARENESS_PHRASES = [
     "What are you avoiding?",
     "The moment is now.",
     "Clarity starts here.",
-    "Your flatmates trust you.",
+    "Your space mates trust you.",
     "Do it fully or don't do it.",
     "The room deserves care.",
     "What would it feel like to finish?",
@@ -124,7 +124,7 @@ REMINDER_TONES = [
     # 0 - First reminder, friendly
     [
         ">> @{username} | Your turn for **{room}** today. You've got this.",
-        "[!] @{username} — **{room}** requires attention. Flatmates will appreciate it.",
+        "[!] @{username} — **{room}** requires attention. Others will appreciate it.",
         ">> @{username}, **{room}** is queued for today. TLC recommended.",
     ],
     # 1 - Second reminder, still nice
@@ -142,7 +142,7 @@ REMINDER_TONES = [
     # 3 - Fourth, firm
     [
         ">> @{username}. The **{room}** will not clean itself. Step up.",
-        "[!] Final reminder | @{username}: **{room}**. Flatmates are waiting.",
+        "[!] Final reminder | @{username}: **{room}**. Others are waiting.",
         ">> @{username}. Enough delays. **{room}**. Now.",
     ],
     # 4 - Military (caps for visibility, not anger)
@@ -153,7 +153,7 @@ REMINDER_TONES = [
     ],
     # 5+ - Guilt / emotion (caps for visibility, stands out in chat)
     [
-        ">> YOUR FLATMATES WALK INTO A DIRTY **{room}** BECAUSE OF YOU, @{username}. JUST SAYING.",
+        ">> OTHERS WALK INTO A DIRTY **{room}** BECAUSE OF YOU, @{username}. JUST SAYING.",
         ">> EVERYONE DOES THEIR PART. EXCEPT **{room}** TODAY. @{username} — IS THIS WHO YOU WANT TO BE?",
         ">> @{username} — **{room}** STILL WAITING. YOUR FRIENDS DESERVE BETTER.",
     ],
@@ -173,7 +173,7 @@ PROACTIVE_CLEANED_RESPONSE = """[+] @{username} | **{room}** logged. Proactive.
 # Proactive cleaning (no reminder, just did it) - used by /cleaned command
 PROACTIVE_CLEANING_MESSAGES = [
     "[+] @{username} | **{room}** cleaned on your own initiative. That's how it's done. Thank you.",
-    "[OK] @{username} — stepped up without being asked. **{room}** logged. Your flatmates notice.",
+    "[OK] @{username} — stepped up without being asked. **{room}** logged. Others notice.",
     "[+] Proactive. **{room}** done. @{username}, this is the way. Acknowledged.",
 ]
 
@@ -206,14 +206,28 @@ MONTHLY_EMPTY = "_No cleanings recorded this month._"
 
 # Menu
 MENU_TEXT = "[>] **Quick actions** — Use buttons below. Pin this message for easy access."
+SETUP_REMINDER_MESSAGE = (
+    "[>] **Set up your shared space**\n\n"
+    "It would be cool to set it up so I could continue functioning. Add at least one room and one member via **Settings**."
+)
+SETUP_REMINDER_SILENT_OPTIONS = "Make silent for:"
+TIMES_PER_MONTH_ERROR = (
+    "It's impossible to have more reminders than there are days in a month. Maximum is 28."
+)
+TIMEZONE_DEFAULT_NOTICE = "Using Europe/Berlin time. Set your timezone in Settings if different."
+SETTINGS_FIRST_MESSAGE = (
+    "[>] **Set up your shared space**\n\n"
+    "Tap the **Settings** button below to create your space: add rooms, set cleaning frequency, and add members."
+)
 CLEANED_CHOOSE_ROOM = "Which room did you clean?"
-CLEANED_NOT_FLATMATE = "You're not in the flatmate list. Ask admin to add you to config.json."
+CLEANED_NOT_MEMBER = "You're not in the member list. Ask an admin to add you via Settings."
 
 # Help
 HELP_TEXT = """
 **[>] Quick access**
 
 Use **/menu** and **pin that message** — then everyone can tap buttons without typing.
+Use **Settings** to create or edit your shared space (rooms, members, cleaning frequency).
 
 **[>] Commands**
 
@@ -223,7 +237,9 @@ Use **/menu** and **pin that message** — then everyone can tap buttons without
 /stats — Cleaning counts
 /history — Full log
 /cleaned <room> — Log cleaning (or use Cleaned button)
-/replace @old NewName @new — Replace a flatmate
+/room <Name> — Add a room (use Settings to set frequency)
+/add @username Name — Add a member
+/replace @old NewName @new — Replace a member
 /help — This message
 """
 

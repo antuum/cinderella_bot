@@ -151,6 +151,7 @@ python main.py
 | `reminder_minute` | Minute for daily reminders |
 | `monthly_report_hour` | Hour for end-of-month stats (default 20) |
 | `monthly_report_minute` | Minute for monthly stats |
+| `timezones` | **Server admin only.** List of `[label, zone]` for Settings timezone picker. Default: all GMT offsets (GMT-12 to GMT+14) with one city each. Edit to customize. Restart required. |
 
 ### Example
 
@@ -207,6 +208,21 @@ When reminded about a cleaning:
 
 ---
 
+## Deploying (pull and restart)
+
+```
+  1. git pull (or copy updated files)
+  2. ./run.sh --stop
+  3. pip install -r requirements.txt   (if dependencies changed)
+  4. ./run.sh --start  (or --auto / -d)
+```
+
+**Migration** — If you had `data/cinderella.json` or `data/cinderella.db` (single-flat version), the first restart migrates to `data/spaces/` automatically. Legacy files are renamed to `.json.legacy` and `.db.migrated`. No data loss. Existing groups keep rooms, members, and history.
+
+**Config** — Your `config.json` stays valid. Add `timezones` if you want to customize the timezone list (see config table). Optional.
+
+---
+
 ## Running on Different Servers
 
 The project is self-contained. Copy the folder (including `data/` if you already ran it) to another machine:
@@ -218,7 +234,7 @@ The project is self-contained. Copy the folder (including `data/` if you already
   [*] ./run.sh --install   (autorun) or ./run.sh -d (daemon) or ./run.sh (foreground)
 ```
 
-**Data** — Stored in `data/cinderella.json`. Human-readable; you can edit it manually if needed. On first run with existing `cinderella.db`, data is migrated to JSON and the old DB is backed up as `cinderella.db.migrated`.
+**Data** — Stored in `data/spaces/` (one JSON file per group: `YYYY-MM-DD_HH-MM-SS_{chat_id}_{name}.json`) and `data/spaces_index.json`. On first run with existing `cinderella.json` or `cinderella.db`, data is migrated to per-space format and legacy files are backed up.
 
 Logs: `data/cinderella.log`. PID: `data/cinderella.pid`.
 

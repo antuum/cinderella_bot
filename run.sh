@@ -162,6 +162,11 @@ do_reset() {
             wiped=1
         fi
     done
+    if [ -d "${DATA}/spaces" ] || [ -f "${DATA}/spaces_index.json" ]; then
+        rm -rf "${DATA}/spaces" "${DATA}/spaces_index.json"
+        echo "[+] Wiped: data/spaces/, data/spaces_index.json"
+        wiped=1
+    fi
     [ "$wiped" = 1 ] || echo "[>] No data files found (clean slate)"
     echo "[>] Starting (same as --auto: autorun if installed, else daemon, else foreground)."
     install_autorun && exit 0

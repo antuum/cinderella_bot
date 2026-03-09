@@ -2,6 +2,7 @@
 Schedule generation: which room, when, who.
 Assigns random weekdays so each person is reminded on a different day
 (one reminder per day, except when postponed).
+Per-space: all functions take chat_id.
 """
 
 import random
@@ -15,13 +16,12 @@ def _weeks_since_epoch(d: datetime) -> int:
     return int(d.timestamp() / (7 * 24 * 3600))
 
 
-def _get_room_slots_for_week(start_sunday: datetime, config: dict) -> List[Dict]:
+def _get_room_slots_for_week(chat_id: int, start_sunday: datetime) -> List[Dict]:
     """
     Get (room_id, room_name) slots for the week — which rooms need cleaning.
-    No dates yet; dates are assigned randomly later.
     """
     slots = []
-    rooms = db.get_rooms()
+    rooms = db.get_rooms(chat_id)
     if not rooms:
         return slots
 
@@ -39,13 +39,13 @@ def _get_room_slots_for_week(start_sunday: datetime, config: dict) -> List[Dict]
     return slots
 
 
-def _assign_person_to_slot(slot: dict, exclude_ids: List[int] = None) -> int:
-    """Return flatmate_id for this slot (fairness: fewest cleanings). Optionally exclude some."""
-    flatmates = db.get_active_flatmates()
+def _assign_person_to_slot(chat_id: int, slot: dict, exclude_ids: List[int] = None) -> int:
+    """Return flatmate_id for this slot (fairness: fewest cleanings)."""
+    flatmates = db.get_active_flatmates(chat_id)
     if not flatmates:
         return 0
     exclude_ids = exclude_ids or []
-    counts = db.get_effective_cleaning_count_per_flatmate()
+    counts = db.get_effective_cleaning_count_per_flatmate(chat_id)
     available = [f for f in flatmates if f["id"] not in exclude_ids]
     if not available:
         available = flatmates
@@ -53,54 +53,46 @@ def _assign_person_to_slot(slot: dict, exclude_ids: List[int] = None) -> int:
     return best["id"]
 
 
-def _generate_week_assignments(start_sunday: datetime, config: dict) -> List[Dict]:
+def _generate_week_assignments(chat_id: int, start_sunday: datetime) -> List[Dict]:
     """
     Generate (room_id, room_name, flatmate_id, due_date) for the week.
-    Spreads assignments across random weekdays so at most one person per day.
     """
-    room_slots = _get_room_slots_for_week(start_sunday, config)
+    room_slots = _get_room_slots_for_week(chat_id, start_sunday)
     if not room_slots:
         return []
 
-    # Assign person to each slot (fairness)
     assignments = []
     for slot in room_slots:
         exclude = [a["flatmate_id"] for a in assignments]
-        flatmate_id = _assign_person_to_slot(slot, exclude)
+        flatmate_id = _assign_person_to_slot(chat_id, slot, exclude)
         if flatmate_id:
             assignments.append({
                 "room_id": slot["room_id"],
                 "room_name": slot["room_name"],
                 "flatmate_id": flatmate_id,
-                "flatmate_name": None,  # filled below
+                "flatmate_name": None,
             })
 
-    # Assign random weekdays — spread so ideally one per day
     num = len(assignments)
-    weekdays = list(range(7))  # 0=Mon ... 6=Sun
+    weekdays = list(range(7))
     random.shuffle(weekdays)
-    # Use first num days from shuffled list (spread across week)
     used_days = weekdays[:num] if num <= 7 else (weekdays * ((num // 7) + 1))[:num]
 
     for i, a in enumerate(assignments):
         day_offset = used_days[i]
         due = start_sunday + timedelta(days=day_offset)
         a["due_date"] = due.strftime("%Y-%m-%d")
-        fm = next((f for f in db.get_active_flatmates() if f["id"] == a["flatmate_id"]), None)
+        fm = next((f for f in db.get_active_flatmates(chat_id) if f["id"] == a["flatmate_id"]), None)
         if fm:
             a["flatmate_name"] = fm["name"]
 
     return sorted(assignments, key=lambda x: (x["due_date"], x["room_name"]))
 
 
-def ensure_assignments_exist(config: dict, up_to_days: int = 14):
+def ensure_assignments_exist(chat_id: int, up_to_days: int = 14):
     """
-    Ensure we have assignments for the next `up_to_days` days.
-    Each week is planned once; assignments are spread across random weekdays.
+    Ensure we have assignments for the next `up_to_days` days for this space.
     """
-    db.sync_flatmates_from_config(config)
-    db.sync_rooms_from_config(config)
-
     today = datetime.now().date()
     end = today + timedelta(days=up_to_days)
     today_dt = datetime(today.year, today.month, today.day)
@@ -111,20 +103,18 @@ def ensure_assignments_exist(config: dict, up_to_days: int = 14):
         start_str = current.strftime("%Y-%m-%d")
         end_str = (current + timedelta(days=6)).strftime("%Y-%m-%d")
 
-        # Skip if this week already has assignments
-        if db.has_assignments_for_week(start_str, end_str):
+        if db.has_assignments_for_week(chat_id, start_str, end_str):
             current += timedelta(days=7)
             continue
 
-        assignments = _generate_week_assignments(current, config)
+        assignments = _generate_week_assignments(chat_id, current)
         for a in assignments:
             due = datetime.strptime(a["due_date"], "%Y-%m-%d").date()
             if today <= due <= end:
-                # Double-check no duplicate for this room+date
-                existing = db.get_pending_assignments_for_date(a["due_date"])
+                existing = db.get_pending_assignments_for_date(chat_id, a["due_date"])
                 room_ids_due = [x["room_id"] for x in existing]
                 if a["room_id"] not in room_ids_due:
-                    db.create_assignment(a["room_id"], a["flatmate_id"], a["due_date"])
+                    db.create_assignment(chat_id, a["room_id"], a["flatmate_id"], a["due_date"])
 
         current += timedelta(days=7)
 

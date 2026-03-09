@@ -1,28 +1,45 @@
 """
-Storage facade. Delegates to JSON storage (storage.py).
-Migrates from SQLite on first run if cinderella.db exists.
+Storage facade. Delegates to per-space JSON storage (storage.py).
+Migrates from legacy cinderella.json/cinderella.db on first run.
+All space-scoped functions take chat_id as first argument.
 """
 
 from cinderella.storage import (
     ensure_db_dir,
     get_connection,
     init_db,
-    save_config,
+    get_or_create_space,
+    space_has_zero_rooms,
+    is_setup_reminder_silenced,
+    set_silence,
+    mark_setup_reminder_sent,
+    get_spaces_for_setup_reminder,
+    add_seen_in_group,
+    get_seen_in_group,
+    get_or_create_group_chat,
+    set_bot_introduced,
+    get_space_settings,
+    save_space_settings,
+    space_has_setup,
     load_config,
+    save_config,
     sync_flatmates_from_config,
+    sync_rooms_from_config,
     replace_flatmate,
     reshuffle_phrase_orders,
     get_and_advance_phrase,
     set_flatmate_telegram_id,
-    sync_rooms_from_config,
     get_active_flatmates,
     get_rooms,
+    add_room,
+    update_room_times,
+    remove_room,
+    add_member,
+    remove_member,
     get_monthly_stats,
     get_cleaning_count_per_flatmate,
     get_effective_cleaning_count_per_flatmate,
     record_cleaning,
-    get_or_create_group_chat,
-    set_bot_introduced,
     get_pending_assignments_for_date,
     set_remind_on,
     has_assignments_for_week,

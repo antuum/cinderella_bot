@@ -9,5 +9,8 @@ venv/
 data/*.db
 data/*.db.migrated
 data/cinderella.json
+data/cinderella.json.legacy
+data/spaces/
+data/spaces_index.json
 !data/.gitkeep
 Cincerella/
