@@ -1597,6 +1597,7 @@ async def send_daily_reminders(context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
             db.increment_reminder_count(chat_id, a["id"])
+            db.set_remind_on(chat_id, a["id"], today)
 
 
 async def send_setup_reminders(context: ContextTypes.DEFAULT_TYPE):

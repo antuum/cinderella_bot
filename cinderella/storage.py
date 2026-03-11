@@ -410,7 +410,10 @@ def get_active_flatmates(chat_id: int):
 
 def get_rooms(chat_id: int):
     state = _load_space(chat_id)
-    return [{"id": r["id"], "name": r["name"], "times_per_month": r["times_per_month"]} for r in state.get("rooms", [])]
+    return [
+        {"id": r["id"], "name": r["name"], "times_per_month": r["times_per_month"], "cleaning_types": r.get("cleaning_types", [])}
+        for r in state.get("rooms", [])
+    ]
 
 
 def add_room(chat_id: int, name: str, times_per_month: int) -> dict:
@@ -420,7 +423,7 @@ def add_room(chat_id: int, name: str, times_per_month: int) -> dict:
     tpm = max(1, min(MAX_TIMES_PER_MONTH, int(times_per_month)))
     rid = state["_next_room_id"]
     state["_next_room_id"] += 1
-    room = {"id": rid, "name": name.strip(), "times_per_month": tpm}
+    room = {"id": rid, "name": name.strip(), "times_per_month": tpm, "cleaning_types": []}
     state.setdefault("rooms", []).append(room)
     state["silent_forever"] = False
     state["silence_until"] = None
@@ -445,6 +448,16 @@ def update_room_times(chat_id: int, room_id: int, times_per_month: int):
     _save_space(chat_id, state)
 
 
+def update_room_cleaning_types(chat_id: int, room_id: int, cleaning_types: list):
+    """Set cleaning types for room. List of strings (from presets or custom)."""
+    state = _load_space(chat_id)
+    for r in state.get("rooms", []):
+        if r["id"] == room_id:
+            r["cleaning_types"] = [t.strip() for t in cleaning_types if t and str(t).strip()]
+            break
+    _save_space(chat_id, state)
+
+
 def remove_room(chat_id: int, room_id: int) -> bool:
     state = _load_space(chat_id)
     state["rooms"] = [r for r in state.get("rooms", []) if r["id"] != room_id]
@@ -453,7 +466,7 @@ def remove_room(chat_id: int, room_id: int) -> bool:
     return True
 
 
-def add_member(chat_id: int, name: str, telegram_username: str, starting_offset: int = 0) -> dict:
+def add_member(chat_id: int, name: str, telegram_username: str, starting_offset: int = 0, telegram_id: int = None) -> dict:
     state = _load_space(chat_id)
     active_count = sum(1 for m in state.get("members", []) if m.get("is_active", True))
     if active_count >= MAX_MEMBERS:
@@ -464,11 +477,40 @@ def add_member(chat_id: int, name: str, telegram_username: str, starting_offset:
             return m  # Already exists
     mid = state["_next_member_id"]
     state["_next_member_id"] += 1
-    member = {"id": mid, "name": name.strip(), "telegram_username": uname, "telegram_id": None,
+    member = {"id": mid, "name": name.strip(), "telegram_username": uname, "telegram_id": telegram_id,
               "is_active": True, "replaced_at": None, "replaced_by_id": None, "starting_offset": starting_offset}
     state.setdefault("members", []).append(member)
     _save_space(chat_id, state)
     return member
+
+
+def space_has_members(chat_id: int) -> bool:
+    """True if space has at least one active member."""
+    state = _load_space(chat_id)
+    return bool([m for m in state.get("members", []) if m.get("is_active", True)])
+
+
+def sync_members_from_group_users(chat_id: int, users: list) -> int:
+    """
+    Seed members from group participants (e.g. chat administrators).
+    Only runs when space has zero members. Each user: {username, first_name, user_id}.
+    Skips users without username (cannot be tagged). Returns count added.
+    """
+    if space_has_members(chat_id):
+        return 0
+    added = 0
+    for u in users:
+        uname = (u.get("username") or "").strip().lower()
+        if not uname:
+            continue
+        first_name = (u.get("first_name") or "").strip()
+        name = first_name or uname
+        try:
+            add_member(chat_id, name, uname, starting_offset=0, telegram_id=u.get("user_id"))
+            added += 1
+        except ValueError:
+            pass
+    return added
 
 
 def remove_member(chat_id: int, username: str) -> bool:
@@ -643,13 +685,97 @@ def get_effective_cleaning_count_per_flatmate(chat_id: int):
     return counts
 
 
-def record_cleaning(chat_id: int, room_id: int, flatmate_id: int, was_assigned: bool = True):
+def get_room_cleaning_count_for_week(chat_id: int, room_id: int, start_date: str, end_date: str) -> int:
+    """Count cleaning records for this room in the date range."""
     state = _load_space(chat_id)
-    state.setdefault("cleaning_records", []).append({
+    count = 0
+    for rec in state.get("cleaning_records", []):
+        if rec.get("room_id") != room_id:
+            continue
+        dt = rec.get("cleaned_at", "")[:10]
+        if start_date <= dt <= end_date:
+            count += 1
+    return count
+
+
+def get_room_weekly_quota(chat_id: int, room_id: int) -> int:
+    """Max cleanings per week for this room (from times_per_month)."""
+    room = next((r for r in get_rooms(chat_id) if r["id"] == room_id), None)
+    if not room:
+        return 1
+    tpm = max(1, room.get("times_per_month", 1))
+    return max(1, tpm // 4)
+
+
+def get_last_cleaning_for_room_this_week(chat_id: int, room_id: int, flatmate_id: int, start_date: str, end_date: str):
+    """Most recent cleaning record for this room by this flatmate in the week, or None."""
+    state = _load_space(chat_id)
+    candidates = []
+    for rec in state.get("cleaning_records", []):
+        if rec.get("room_id") != room_id or rec.get("flatmate_id") != flatmate_id:
+            continue
+        dt = rec.get("cleaned_at", "")[:10]
+        if start_date <= dt <= end_date:
+            candidates.append(rec)
+    if not candidates:
+        return None
+    return max(candidates, key=lambda r: r.get("cleaned_at", ""))
+
+
+def can_record_room_cleaning(chat_id: int, room_id: int) -> tuple:
+    """
+    Check if room can accept another cleaning this week. Returns (True, None) or (False, "reason").
+    """
+    from datetime import datetime, timedelta
+    now = datetime.now()
+    days_since_sunday = (now.weekday() + 1) % 7
+    start_dt = now - timedelta(days=days_since_sunday)
+    start_str = start_dt.strftime("%Y-%m-%d")
+    end_str = (start_dt + timedelta(days=6)).strftime("%Y-%m-%d")
+    count = get_room_cleaning_count_for_week(chat_id, room_id, start_str, end_str)
+    quota = get_room_weekly_quota(chat_id, room_id)
+    if count >= quota:
+        room = next((r for r in get_rooms(chat_id) if r["id"] == room_id), None)
+        name = room["name"] if room else "This room"
+        return False, f"{name} is already cleaned {quota} time{'s' if quota > 1 else ''} this week. Wait for next week."
+    return True, None
+
+
+def update_cleaning_record_types(chat_id: int, room_id: int, flatmate_id: int, new_types_done: list):
+    """Update the most recent cleaning record for this room by this flatmate this week. No new points."""
+    from datetime import datetime, timedelta
+    now = datetime.now()
+    days_since_sunday = (now.weekday() + 1) % 7
+    start_dt = now - timedelta(days=days_since_sunday)
+    start_str = start_dt.strftime("%Y-%m-%d")
+    end_str = (start_dt + timedelta(days=6)).strftime("%Y-%m-%d")
+    last = get_last_cleaning_for_room_this_week(chat_id, room_id, flatmate_id, start_str, end_str)
+    if not last:
+        return False
+    state = _load_space(chat_id)
+    cleaned_at = last.get("cleaned_at")
+    for rec in state.get("cleaning_records", []):
+        if (rec.get("room_id") == room_id and rec.get("flatmate_id") == flatmate_id
+                and rec.get("cleaned_at") == cleaned_at):
+            rec["cleaning_types_done"] = list(new_types_done)
+            _save_space(chat_id, state)
+            return True
+    return False
+
+
+def record_cleaning(chat_id: int, room_id: int, flatmate_id: int, was_assigned: bool = True, cleaning_types_done: list = None):
+    ok, reason = can_record_room_cleaning(chat_id, room_id)
+    if not ok:
+        raise ValueError(reason)
+    state = _load_space(chat_id)
+    rec = {
         "room_id": room_id, "flatmate_id": flatmate_id,
         "cleaned_at": datetime.utcnow().isoformat(),
         "was_assigned": was_assigned,
-    })
+    }
+    if cleaning_types_done is not None:
+        rec["cleaning_types_done"] = list(cleaning_types_done)
+    state.setdefault("cleaning_records", []).append(rec)
     _save_space(chat_id, state)
 
 
@@ -663,7 +789,11 @@ def get_pending_assignments_for_date(chat_id: int, date_str: str):
             continue
         remind_on = a.get("remind_on")
         due = a.get("due_date")
-        if not ((remind_on == date_str) or (remind_on is None and due == date_str)):
+        effective_remind = remind_on if remind_on is not None else due
+        if not effective_remind or effective_remind > date_str:
+            continue
+        # Skip if already reminded today (avoids double-send on job retry)
+        if a.get("last_reminder_at", "").startswith(date_str):
             continue
         room = room_by_id.get(a["room_id"], {})
         m = member_by_id.get(a["flatmate_id"], {})
@@ -690,6 +820,16 @@ def has_assignments_for_week(chat_id: int, start_date: str, end_date: str) -> bo
     return any(start_date <= a.get("due_date", "") <= end_date for a in state.get("assignments", []))
 
 
+def get_pending_assignments_raw_for_week(chat_id: int, start_date: str, end_date: str):
+    """Return list of {room_id, flatmate_id} for pending assignments in range."""
+    state = _load_space(chat_id)
+    return [
+        {"room_id": a["room_id"], "flatmate_id": a["flatmate_id"]}
+        for a in state.get("assignments", [])
+        if a.get("status") == "pending" and start_date <= a.get("due_date", "") <= end_date
+    ]
+
+
 def get_assignments_for_week(chat_id: int, start_date: str, end_date: str):
     state = _load_space(chat_id)
     room_by_id = {r["id"]: r for r in state.get("rooms", [])}
@@ -706,6 +846,20 @@ def get_assignments_for_week(chat_id: int, start_date: str, end_date: str):
         })
     result.sort(key=lambda x: (x["due_date"], x["room_name"]))
     return result
+
+
+def clear_pending_assignments_for_week(chat_id: int, start_date: str, end_date: str) -> int:
+    """Remove pending assignments in date range. Returns count removed."""
+    state = _load_space(chat_id)
+    before = len(state.get("assignments", []))
+    state["assignments"] = [
+        a for a in state.get("assignments", [])
+        if a.get("status") != "pending" or not (start_date <= a.get("due_date", "") <= end_date)
+    ]
+    removed = before - len(state["assignments"])
+    if removed:
+        _save_space(chat_id, state)
+    return removed
 
 
 def create_assignment(chat_id: int, room_id: int, flatmate_id: int, due_date: str):
@@ -899,6 +1053,7 @@ def get_full_cleaning_history(chat_id: int):
             "flatmate_name": member_by_id.get(rec["flatmate_id"], {}).get("name", "?"),
             "flatmate_username": member_by_id.get(rec["flatmate_id"], {}).get("username", "?"),
             "cleaned_at": rec.get("cleaned_at", ""),
+            "cleaning_types_done": rec.get("cleaning_types_done", []),
         })
     records.sort(key=lambda r: r["cleaned_at"], reverse=True)
     return records

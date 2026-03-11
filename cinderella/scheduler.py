@@ -18,12 +18,16 @@ def _weeks_since_epoch(d: datetime) -> int:
 
 def _get_room_slots_for_week(chat_id: int, start_sunday: datetime) -> List[Dict]:
     """
-    Get (room_id, room_name) slots for the week — which rooms need cleaning.
+    Get (room_id, room_name) slots for the week — which rooms still need cleaning.
+    Subtracts already-done cleanings this week so we don't over-assign.
     """
     slots = []
     rooms = db.get_rooms(chat_id)
     if not rooms:
         return slots
+
+    start_str = start_sunday.strftime("%Y-%m-%d")
+    end_str = (start_sunday + timedelta(days=6)).strftime("%Y-%m-%d")
 
     week_num = _weeks_since_epoch(start_sunday)
     for room in rooms:
@@ -34,13 +38,15 @@ def _get_room_slots_for_week(chat_id: int, start_sunday: datetime) -> List[Dict]
         if week_num % weeks_between != 0:
             continue
         slots_per_week = max(1, tpm // 4)
-        for _ in range(slots_per_week):
+        done_this_week = db.get_room_cleaning_count_for_week(chat_id, room["id"], start_str, end_str)
+        needed = max(0, slots_per_week - done_this_week)
+        for _ in range(needed):
             slots.append({"room_id": room["id"], "room_name": room["name"]})
     return slots
 
 
 def _assign_person_to_slot(chat_id: int, slot: dict, exclude_ids: List[int] = None) -> int:
-    """Return flatmate_id for this slot (fairness: fewest cleanings)."""
+    """Return flatmate_id for this slot. Prioritize fewest cleanings; when tied, random."""
     flatmates = db.get_active_flatmates(chat_id)
     if not flatmates:
         return 0
@@ -49,17 +55,21 @@ def _assign_person_to_slot(chat_id: int, slot: dict, exclude_ids: List[int] = No
     available = [f for f in flatmates if f["id"] not in exclude_ids]
     if not available:
         available = flatmates
-    best = min(available, key=lambda f: counts.get(f["id"], 0))
+    min_count = min(counts.get(f["id"], 0) for f in available)
+    ties = [f for f in available if counts.get(f["id"], 0) == min_count]
+    best = random.choice(ties) if len(ties) > 1 else ties[0]
     return best["id"]
 
 
 def _generate_week_assignments(chat_id: int, start_sunday: datetime) -> List[Dict]:
     """
     Generate (room_id, room_name, flatmate_id, due_date) for the week.
+    Random room order; random day per slot; fairness: fewest points first, ties random.
     """
     room_slots = _get_room_slots_for_week(chat_id, start_sunday)
     if not room_slots:
         return []
+    random.shuffle(room_slots)
 
     assignments = []
     for slot in room_slots:
@@ -89,9 +99,26 @@ def _generate_week_assignments(chat_id: int, start_sunday: datetime) -> List[Dic
     return sorted(assignments, key=lambda x: (x["due_date"], x["room_name"]))
 
 
+def _week_needs_regenerate(chat_id: int, start_sunday: datetime) -> bool:
+    """True if this week's assignments don't match current config (tpm/members/rooms changed)."""
+    expected_slots = _get_room_slots_for_week(chat_id, start_sunday)
+    start_str = start_sunday.strftime("%Y-%m-%d")
+    end_str = (start_sunday + timedelta(days=6)).strftime("%Y-%m-%d")
+    existing = db.get_pending_assignments_raw_for_week(chat_id, start_str, end_str)
+    if len(existing) != len(expected_slots):
+        return True
+    room_ids = {r["id"] for r in db.get_rooms(chat_id)}
+    member_ids = {m["id"] for m in db.get_active_flatmates(chat_id)}
+    for a in existing:
+        if a.get("room_id") not in room_ids or a.get("flatmate_id") not in member_ids:
+            return True
+    return False
+
+
 def ensure_assignments_exist(chat_id: int, up_to_days: int = 14):
     """
-    Ensure we have assignments for the next `up_to_days` days for this space.
+    Ensure assignments for the next up_to_days days. Reconfigures when rooms, members,
+    or times_per_month change so the schedule immediately reflects the new density.
     """
     today = datetime.now().date()
     end = today + timedelta(days=up_to_days)
@@ -103,17 +130,12 @@ def ensure_assignments_exist(chat_id: int, up_to_days: int = 14):
         start_str = current.strftime("%Y-%m-%d")
         end_str = (current + timedelta(days=6)).strftime("%Y-%m-%d")
 
-        if db.has_assignments_for_week(chat_id, start_str, end_str):
-            current += timedelta(days=7)
-            continue
-
-        assignments = _generate_week_assignments(chat_id, current)
-        for a in assignments:
-            due = datetime.strptime(a["due_date"], "%Y-%m-%d").date()
-            if today <= due <= end:
-                existing = db.get_pending_assignments_for_date(chat_id, a["due_date"])
-                room_ids_due = [x["room_id"] for x in existing]
-                if a["room_id"] not in room_ids_due:
+        if _week_needs_regenerate(chat_id, current):
+            db.clear_pending_assignments_for_week(chat_id, start_str, end_str)
+            assignments = _generate_week_assignments(chat_id, current)
+            for a in assignments:
+                due = datetime.strptime(a["due_date"], "%Y-%m-%d").date()
+                if today <= due <= end:
                     db.create_assignment(chat_id, a["room_id"], a["flatmate_id"], a["due_date"])
 
         current += timedelta(days=7)

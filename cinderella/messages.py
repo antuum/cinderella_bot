@@ -125,7 +125,7 @@ REMINDER_TONES = [
     [
         ">> @{username} | Your turn for **{room}** today. You've got this.",
         "[!] @{username} — **{room}** requires attention. Others will appreciate it.",
-        ">> @{username}, **{room}** is queued for today. TLC recommended.",
+        ">> @{username}, **{room}** is queued for today. Do it when you can.",
     ],
     # 1 - Second reminder, still nice
     [
