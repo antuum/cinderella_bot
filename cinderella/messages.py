@@ -159,6 +159,27 @@ REMINDER_TONES = [
     ],
 ]
 
+# One chat message for several due tasks (same or different people). Calm copy — group is not cleaning-only.
+GROUP_DIGEST_INTRO = [
+    ">> **{n}** cleaning check-in(s) in a single ping — less noise in the group:",
+    ">> Shared flat: **{n}** task(s) bundled into one reminder:",
+]
+
+
+def get_group_digest_reminder_text(sorted_assignments: list, phrase_idx: int = 0) -> str:
+    """Body lists each room + assignee; always friendly."""
+    import random
+    n = len(sorted_assignments)
+    lines = [
+        f"· **{escape_md(a['room_name'])}** — @{escape_md(a['telegram_username'])}"
+        for a in sorted_assignments
+    ]
+    block = "\n".join(lines)
+    tone_line = random.choice(GROUP_DIGEST_INTRO).format(n=n)
+    phrase = AWARENESS_PHRASES[phrase_idx % len(AWARENESS_PHRASES)]
+    return f"{tone_line}\n\n{block}\n\n{phrase}"
+
+
 DONE_MESSAGES = [
     "[+] @{username} | **{room}** logged as cleaned. Acknowledged.",
     "[OK] @{username} | **{room}** complete. Everyone will appreciate it.",

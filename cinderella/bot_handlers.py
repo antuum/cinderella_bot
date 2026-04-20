@@ -1559,8 +1559,36 @@ def _job_reminder_callback(context: ContextTypes.DEFAULT_TYPE):
         asyncio.create_task(send_reminder(context, chat_id, assignment_id))
 
 
+def _reminder_keyboard_rows_for_assignment(a: dict, multi: bool) -> list:
+    """Two rows of buttons for one assignment; when multi, label with room to tell tasks apart."""
+    rid = a["id"]
+    rname = (a.get("room_name") or "?").strip()
+    if multi:
+        short = (rname[:18] + "…") if len(rname) > 18 else rname
+        return [
+            [
+                InlineKeyboardButton(f"Later · {short}", callback_data=f"not_today:{rid}"),
+                InlineKeyboardButton(f"+3d · {short}", callback_data=f"three_days:{rid}"),
+            ],
+            [
+                InlineKeyboardButton(f"Skip · {short}", callback_data=f"skip_week:{rid}"),
+                InlineKeyboardButton(f"Done · {short}", callback_data=f"done:{rid}"),
+            ],
+        ]
+    return [
+        [
+            InlineKeyboardButton("Not today", callback_data=f"not_today:{rid}"),
+            InlineKeyboardButton("3 more days", callback_data=f"three_days:{rid}"),
+        ],
+        [
+            InlineKeyboardButton("Skip the week", callback_data=f"skip_week:{rid}"),
+            InlineKeyboardButton("Done [OK]", callback_data=f"done:{rid}"),
+        ],
+    ]
+
+
 async def send_daily_reminders(context: ContextTypes.DEFAULT_TYPE):
-    """Called daily by job_queue. Send reminders for today's assignments (per space)."""
+    """Called daily by job_queue. One message per space when several tasks are due; one message if only one task."""
     today = datetime.now().strftime("%Y-%m-%d")
     chat_ids = db.get_chat_ids_with_bot_introduced()
 
@@ -1569,7 +1597,11 @@ async def send_daily_reminders(context: ContextTypes.DEFAULT_TYPE):
             continue
         sched.ensure_assignments_exist(chat_id)
         assignments = db.get_pending_assignments_for_date(chat_id, today)
-        for a in assignments:
+        if not assignments:
+            continue
+
+        if len(assignments) == 1:
+            a = assignments[0]
             phrase_idx = db.get_and_advance_phrase(chat_id, a["room_id"])
             text = msg.get_reminder_text(
                 a["room_name"],
@@ -1577,25 +1609,30 @@ async def send_daily_reminders(context: ContextTypes.DEFAULT_TYPE):
                 a["reminder_count"],
                 phrase_idx,
             )
-            keyboard = [
-                [
-                    InlineKeyboardButton("Not today", callback_data=f"not_today:{a['id']}"),
-                    InlineKeyboardButton("3 more days", callback_data=f"three_days:{a['id']}"),
-                ],
-                [
-                    InlineKeyboardButton("Skip the week", callback_data=f"skip_week:{a['id']}"),
-                    InlineKeyboardButton("Done [OK]", callback_data=f"done:{a['id']}"),
-                ],
-            ]
-            try:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=text,
-                    parse_mode="Markdown",
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                )
-            except Exception:
-                pass
+            keyboard = _reminder_keyboard_rows_for_assignment(a, multi=False)
+            to_mark = [a]
+        else:
+            group = sorted(
+                assignments,
+                key=lambda x: (x["telegram_username"], x["room_name"], x["id"]),
+            )
+            phrase_idx = db.get_and_advance_phrase(chat_id, group[0]["room_id"])
+            text = msg.get_group_digest_reminder_text(group, phrase_idx)
+            keyboard = []
+            for a in group:
+                keyboard.extend(_reminder_keyboard_rows_for_assignment(a, multi=True))
+            to_mark = group
+
+        try:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
+        except Exception:
+            continue
+        for a in to_mark:
             db.increment_reminder_count(chat_id, a["id"])
             db.set_remind_on(chat_id, a["id"], today)
 

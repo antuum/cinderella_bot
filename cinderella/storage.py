@@ -763,6 +763,39 @@ def update_cleaning_record_types(chat_id: int, room_id: int, flatmate_id: int, n
     return False
 
 
+def _apply_soften_reminder_escalation(state: dict, flatmate_id: int) -> None:
+    """Reset harsh tone for this flatmate's other pending tasks after they log a cleaning.
+    Does not touch last_reminder_at or remind_on (same-day dedup + postpones stay correct)."""
+    for a in state.get("assignments", []):
+        if a.get("status") != "pending" or a.get("flatmate_id") != flatmate_id:
+            continue
+        if a.get("reminder_count", 0):
+            a["reminder_count"] = 0
+
+
+def _apply_auto_complete_assignments_for_cleaning(
+    state: dict, room_id: int, cleaned_at_iso: str,
+) -> set:
+    """Close every pending assignment for this room with due_date on/before cleaning day — any assignee.
+    If someone else cleaned, the room is done; rotation uses points, so lingering rows for others were wrong."""
+    day = (cleaned_at_iso or "")[:10]
+    if len(day) < 10:
+        day = datetime.utcnow().strftime("%Y-%m-%d")
+    closed_flatmates = set()
+    for a in state.get("assignments", []):
+        if a.get("status") != "pending":
+            continue
+        if a.get("room_id") != room_id:
+            continue
+        due = a.get("due_date") or ""
+        if due and due <= day:
+            a["status"] = "done"
+            fid = a.get("flatmate_id")
+            if fid is not None:
+                closed_flatmates.add(fid)
+    return closed_flatmates
+
+
 def record_cleaning(chat_id: int, room_id: int, flatmate_id: int, was_assigned: bool = True, cleaning_types_done: list = None):
     ok, reason = can_record_room_cleaning(chat_id, room_id)
     if not ok:
@@ -776,6 +809,10 @@ def record_cleaning(chat_id: int, room_id: int, flatmate_id: int, was_assigned: 
     if cleaning_types_done is not None:
         rec["cleaning_types_done"] = list(cleaning_types_done)
     state.setdefault("cleaning_records", []).append(rec)
+    closed_for_room = _apply_auto_complete_assignments_for_cleaning(state, room_id, rec["cleaned_at"])
+    for fid in closed_for_room | {flatmate_id}:
+        if fid is not None:
+            _apply_soften_reminder_escalation(state, fid)
     _save_space(chat_id, state)
 
 
@@ -875,10 +912,14 @@ def create_assignment(chat_id: int, room_id: int, flatmate_id: int, due_date: st
 
 def update_assignment_status(chat_id: int, assignment_id: int, status: str):
     state = _load_space(chat_id)
+    flatmate_id = None
     for a in state.get("assignments", []):
         if a["id"] == assignment_id:
+            flatmate_id = a.get("flatmate_id")
             a["status"] = status
             break
+    if status == "done" and flatmate_id is not None:
+        _apply_soften_reminder_escalation(state, flatmate_id)
     _save_space(chat_id, state)
 
 
